@@ -2,25 +2,48 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-type Member = { id: string; name: string; initial: string; color: string; celebration: "unicorn" | "racecar" | "rocket" };
+type Member = { id: string; name: string; initial: string; color: string; celebrationEmoji: string; celebrationMessage: string };
 type Chore = { id: string; title: string; detail: string; icon: string; points: number; memberId: string; cadence: "daily" | "weekly"; dueDay?: number };
 type Completion = { choreId: string; date: string };
 type AppState = { household: string; members: Member[]; chores: Chore[]; completions: Completion[] };
 type CalendarEvent = { id: string; title: string; start: string; end: string; allDay: boolean; location: string; calendar: string; type: "kids" | "work" | "family"; color: string };
 
 const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const celebrationChoices = ["🦄", "✨", "🌈", "🧚", "🏎️", "🚀", "🦖", "⚽", "🐉", "🎉", "🏆", "⭐"];
+const coreChores = [
+  { slug: "teeth", title: "Brush your teeth", detail: "Morning & bedtime", icon: "🪥", points: 5 },
+  { slug: "bed", title: "Make your bed", detail: "Start the day tidy", icon: "🛏️", points: 5 },
+  { slug: "kind", title: "Do something kind", detail: "Help or encourage someone", icon: "💛", points: 10 },
+  { slug: "tidy", title: "Tidy your things", detail: "Toys, clothes & belongings", icon: "🧸", points: 8 },
+] as const;
+const suggestedChores = [
+  { title: "Put dirty clothes in the hamper", detail: "Little helper", icon: "👕", points: 5, cadence: "daily" as const },
+  { title: "Set or clear the table", detail: "Little helper", icon: "🍽️", points: 8, cadence: "daily" as const },
+  { title: "Feed a pet", detail: "Little helper", icon: "🐾", points: 8, cadence: "daily" as const },
+  { title: "Water plants", detail: "Little helper", icon: "🪴", points: 8, cadence: "weekly" as const },
+  { title: "Sort or fold laundry", detail: "Growing helper", icon: "🧺", points: 12, cadence: "weekly" as const },
+  { title: "Sweep or vacuum a room", detail: "Growing helper", icon: "🧹", points: 15, cadence: "weekly" as const },
+  { title: "Unload the dishwasher", detail: "Growing helper", icon: "🍽️", points: 15, cadence: "weekly" as const },
+  { title: "Help prepare a meal", detail: "With adult supervision", icon: "🥗", points: 18, cadence: "weekly" as const },
+  { title: "Take out the trash", detail: "Independent helper", icon: "🗑️", points: 15, cadence: "weekly" as const },
+  { title: "Change your bedsheets", detail: "Independent helper", icon: "🛏️", points: 20, cadence: "weekly" as const },
+  { title: "Clean the bathroom sink", detail: "Independent helper", icon: "🧽", points: 20, cadence: "weekly" as const },
+  { title: "Help Dad with a project", detail: "Family teamwork", icon: "🛠️", points: 25, cadence: "weekly" as const },
+];
 const starterState: AppState = {
   household: "The Petrous Family",
   members: [
-    { id: "charli", name: "Charli", initial: "C", color: "#b85dc7", celebration: "unicorn" },
-    { id: "andy", name: "Andy", initial: "A", color: "#e76f35", celebration: "racecar" },
-    { id: "henry", name: "Henry", initial: "H", color: "#3186c7", celebration: "rocket" },
+    { id: "charli", name: "Charli", initial: "C", color: "#b85dc7", celebrationEmoji: "🦄", celebrationMessage: "Magical job!" },
+    { id: "andy", name: "Andy", initial: "A", color: "#e76f35", celebrationEmoji: "🏎️", celebrationMessage: "You raced through it!" },
+    { id: "henry", name: "Henry", initial: "H", color: "#3186c7", celebrationEmoji: "🚀", celebrationMessage: "Blast-off—great job!" },
   ],
   chores: [
     { id: "charli-teeth", title: "Brush your teeth", detail: "Morning & bedtime", icon: "🪥", points: 5, memberId: "charli", cadence: "daily" },
     { id: "charli-bed", title: "Make your bed", detail: "Before breakfast", icon: "🛏️", points: 5, memberId: "charli", cadence: "daily" },
     { id: "charli-kind", title: "Do something kind", detail: "For Andy or Henry", icon: "💜", points: 12, memberId: "charli", cadence: "daily" },
     { id: "andy-teeth", title: "Brush your teeth", detail: "Morning & bedtime", icon: "🪥", points: 5, memberId: "andy", cadence: "daily" },
+    { id: "andy-bed", title: "Make your bed", detail: "Start the day tidy", icon: "🛏️", points: 5, memberId: "andy", cadence: "daily" },
+    { id: "andy-kind", title: "Do something kind", detail: "Help or encourage someone", icon: "💛", points: 10, memberId: "andy", cadence: "daily" },
     { id: "andy-toys", title: "Pick up your toys", detail: "Before bedtime", icon: "🧸", points: 8, memberId: "andy", cadence: "daily" },
     { id: "andy-bath", title: "Take a shower or bath", detail: "Get squeaky clean", icon: "🛁", points: 10, memberId: "andy", cadence: "weekly", dueDay: 3 },
     { id: "henry-teeth", title: "Brush your teeth", detail: "Morning & bedtime", icon: "🪥", points: 5, memberId: "henry", cadence: "daily" },
@@ -34,6 +57,21 @@ const starterState: AppState = {
   completions: [],
 };
 
+function normalizeState(saved: AppState): AppState {
+  const members = saved.members.map((member) => {
+    const legacy = member as Member & { celebration?: string };
+    const fallback = legacy.celebration === "unicorn" ? "🦄" : legacy.celebration === "racecar" ? "🏎️" : "🚀";
+    return { ...member, celebrationEmoji: member.celebrationEmoji || fallback, celebrationMessage: member.celebrationMessage || "Way to go!" };
+  });
+  const chores = [...saved.chores];
+  for (const member of members) for (const core of coreChores) {
+    if (!chores.some((chore) => chore.memberId === member.id && chore.id === `${member.id}-${core.slug}`)) {
+      chores.push({ id: `${member.id}-${core.slug}`, title: core.title, detail: core.detail, icon: core.icon, points: core.points, memberId: member.id, cadence: "daily" });
+    }
+  }
+  return { ...saved, members, chores };
+}
+
 const iso = (date = new Date()) => date.toISOString().slice(0, 10);
 const addDays = (date: Date, amount: number) => { const next = new Date(date); next.setDate(next.getDate() + amount); return next; };
 const startOfWeek = (date: Date) => addDays(date, -date.getDay());
@@ -46,7 +84,9 @@ export function ChoreChart() {
   const [showAdd, setShowAdd] = useState(false);
   const [editingChore, setEditingChore] = useState<Chore | null>(null);
   const [showPeople, setShowPeople] = useState(false);
-  const [celebration, setCelebration] = useState<{ emoji: string; color: string; name: string } | null>(null);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [suggestionMember, setSuggestionMember] = useState("charli");
+  const [celebration, setCelebration] = useState<{ emoji: string; color: string; name: string; message: string } | null>(null);
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [calendarConfigured, setCalendarConfigured] = useState<boolean | null>(null);
   const [syncLabel, setSyncLabel] = useState("Loading…");
@@ -57,11 +97,11 @@ export function ChoreChart() {
         const response = await fetch("/api/state", { cache: "no-store" });
         if (!response.ok) throw new Error();
         const saved = (await response.json()) as AppState | null;
-        if (saved) setState(saved);
+        if (saved) setState(normalizeState(saved));
         setSyncLabel("Synced");
       } catch {
         const local = window.localStorage.getItem("tidy-team-state-v4");
-        if (local) setState(JSON.parse(local));
+        if (local) setState(normalizeState(JSON.parse(local)));
         setSyncLabel("Saved on this device");
       }
     };
@@ -103,8 +143,7 @@ export function ChoreChart() {
       const chore = state.chores.find((item) => item.id === choreId);
       const member = state.members.find((item) => item.id === chore?.memberId);
       if (member) {
-        const emoji = member.celebration === "unicorn" ? "🦄" : member.celebration === "racecar" ? "🏎️" : "🚀";
-        setCelebration({ emoji, color: member.color, name: member.name });
+        setCelebration({ emoji: member.celebrationEmoji, color: member.color, name: member.name, message: member.celebrationMessage });
         window.setTimeout(() => setCelebration(null), 1500);
       }
     }
@@ -144,8 +183,13 @@ export function ChoreChart() {
   };
 
   const savePeople = (form: FormData) => {
-    const members = state.members.map((member) => { const name = String(form.get(member.id) || member.name).trim(); return { ...member, name, initial: name.slice(0, 1).toUpperCase() }; });
+    const members = state.members.map((member) => { const name = String(form.get(`${member.id}-name`) || member.name).trim(); return { ...member, name, initial: name.slice(0, 1).toUpperCase(), celebrationEmoji: String(form.get(`${member.id}-emoji`) || member.celebrationEmoji), celebrationMessage: String(form.get(`${member.id}-message`) || member.celebrationMessage).trim() }; });
     persist({ ...state, members }); setShowPeople(false);
+  };
+
+  const addSuggestion = (suggestion: typeof suggestedChores[number]) => {
+    const chore: Chore = { id: `${suggestionMember}-${Date.now()}`, ...suggestion, memberId: suggestionMember, ...(suggestion.cadence === "weekly" ? { dueDay: selectedDate.getDay() } : {}) };
+    persist({ ...state, chores: [...state.chores, chore] });
   };
 
   return <main className="shell">
@@ -173,7 +217,7 @@ export function ChoreChart() {
       <div className="controls">
         <div className="tabs"><button className={tab === "today" ? "active" : ""} onClick={() => setTab("today")}>My day</button><button className={tab === "week" ? "active" : ""} onClick={() => setTab("week")}>Our week</button></div>
         <div className="memberFilters"><button className={activeMember === "all" ? "active" : ""} onClick={() => setActiveMember("all")}>Everyone</button>{state.members.map((m) => <button key={m.id} className={activeMember === m.id ? "active" : ""} onClick={() => setActiveMember(m.id)}><span style={{ background: m.color }}>{m.initial}</span>{m.name}</button>)}</div>
-        <button className="addButton" onClick={() => setShowAdd(true)}>＋ Add a job</button>
+        <button className="ideaButton" onClick={() => setShowSuggestions(true)}>💡 Chore ideas</button><button className="addButton" onClick={() => setShowAdd(true)}>＋ Add a job</button>
       </div>
       <div className="weekStrip">{weekDates.map((date) => <button key={iso(date)} className={iso(date) === selectedIso ? "active" : ""} onClick={() => setSelectedDate(date)}><span>{dayNames[date.getDay()]}</span><strong>{date.getDate()}</strong>{iso(date) === iso() && <i>Today</i>}</button>)}</div>
 
@@ -214,10 +258,18 @@ export function ChoreChart() {
 
     {showPeople && <div className="modalBackdrop" onMouseDown={(event) => event.target === event.currentTarget && setShowPeople(false)}><form className="modal" action={savePeople}>
       <button type="button" className="close" onClick={() => setShowPeople(false)} aria-label="Close">×</button><p className="eyebrow">Your household</p><h2>Edit the team</h2>
-      {state.members.map((member) => <label className="personField" key={member.id}><span style={{ background: member.color }}>{member.initial}</span><span>{member.celebration === "unicorn" ? "🦄 Sparkles & unicorns" : member.celebration === "racecar" ? "🏎️ Race cars" : "🚀 Rocketships"}</span><input name={member.id} defaultValue={member.name} required /></label>)}
+      <p className="modalIntro">Everyone can choose any celebration they like. Pick an emoji and personalize the cheer.</p>
+      {state.members.map((member) => <fieldset className="personEditor" key={member.id}><legend><span style={{ background: member.color }}>{member.initial}</span>{member.name}</legend><label>Name<input name={`${member.id}-name`} defaultValue={member.name} required /></label><div className="formRow"><label>Reaction<select name={`${member.id}-emoji`} defaultValue={member.celebrationEmoji}>{celebrationChoices.map((emoji) => <option key={emoji}>{emoji}</option>)}</select></label><label>Cheer<input name={`${member.id}-message`} defaultValue={member.celebrationMessage} maxLength={40} /></label></div></fieldset>)}
       <button className="saveButton" type="submit">Save team</button>
     </form></div>}
 
-    {celebration && <div className="celebration" aria-live="polite" style={{ "--celebrate": celebration.color } as React.CSSProperties}><div className="burst"><i>✦</i><i>★</i><span>{celebration.emoji}</span><i>✦</i><i>★</i></div><strong>Way to go, {celebration.name}!</strong></div>}
+    {showSuggestions && <div className="modalBackdrop" onMouseDown={(event) => event.target === event.currentTarget && setShowSuggestions(false)}><section className="modal suggestionModal" role="dialog" aria-modal="true" aria-labelledby="suggestion-title">
+      <button type="button" className="close" onClick={() => setShowSuggestions(false)} aria-label="Close">×</button><p className="eyebrow">Ready-to-assign ideas</p><h2 id="suggestion-title">Chore library</h2>
+      <p className="modalIntro">Choose the child, then tap any idea to add it. Start with tasks they can do safely and add responsibility as their skills grow.</p>
+      <label>Assign ideas to<select value={suggestionMember} onChange={(event) => setSuggestionMember(event.target.value)}>{state.members.map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select></label>
+      <div className="suggestionList">{suggestedChores.map((suggestion) => <button type="button" key={suggestion.title} onClick={() => addSuggestion(suggestion)}><span>{suggestion.icon}</span><span><strong>{suggestion.title}</strong><small>{suggestion.detail} · {suggestion.cadence}</small></span><b>＋</b></button>)}</div>
+    </section></div>}
+
+    {celebration && <div className="celebration" aria-live="polite" style={{ "--celebrate": celebration.color } as React.CSSProperties}><div className="burst"><i>✦</i><i>★</i><span>{celebration.emoji}</span><i>✦</i><i>★</i></div><strong>{celebration.message} {celebration.name}!</strong></div>}
   </main>;
 }
