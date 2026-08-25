@@ -17,6 +17,7 @@ type PointPolicy = { reset: "never" | "weekly" | "monthly"; dailyEarnLimit: numb
 type NotificationSettings = { enabled: boolean; evening: boolean; rewards: boolean; calendar: boolean; quietStart: string; quietEnd: string; memberIds: string[] };
 type AccessibilitySettings = { highContrast: boolean; largeText: boolean; reducedMotion: boolean; sounds: boolean; spokenChores: boolean };
 type RewardSuggestion = { id: string; memberId: string; title: string; emoji: string; createdAt: string; status: "pending" | "approved" };
+type SuggestedChore = { title: string; detail: string; icon: string; points: number; cadence: Cadence; routine: Routine; area: Room; team?: boolean };
 type EngagementSettings = { mysteryEnabled: boolean; mysteryChance: number; questEnabled: boolean; questTarget: number; questReward: string; mode: "normal" | "vacation" | "visit"; shields: Record<string, number>; photoRetentionDays: number };
 type AppState = { household: string; members: Member[]; chores: Chore[]; completions: Completion[]; rewards: Reward[]; redemptions: Redemption[]; adjustments: PointAdjustment[]; rewardSuggestions: RewardSuggestion[]; removedDefaultChoreIds: string[]; pointPolicy: PointPolicy; notificationSettings: NotificationSettings; accessibilitySettings: AccessibilitySettings; engagementSettings: EngagementSettings };
 type CalendarEvent = { id: string; title: string; start: string; end: string; allDay: boolean; location: string; calendar: string; type: "kids" | "work" | "family"; color: string };
@@ -65,19 +66,27 @@ const coreChores = [
   { slug: "room", title: "Clean your room", detail: "Put things back where they belong", icon: "🧹", points: 15, routine: "evening" as Routine },
   { slug: "dad-project", title: "Help Dad with a project", detail: "Family teamwork", icon: "🛠️", points: 15, routine: "anytime" as Routine },
 ] as const;
-const suggestedChores = [
-  { title: "Put dirty clothes in the hamper", detail: "Little helper", icon: "👕", points: 5, cadence: "daily" as const },
-  { title: "Set or clear the table", detail: "Little helper", icon: "🍽️", points: 8, cadence: "daily" as const },
-  { title: "Feed a pet", detail: "Little helper", icon: "🐾", points: 8, cadence: "daily" as const },
-  { title: "Water plants", detail: "Little helper", icon: "🪴", points: 8, cadence: "weekly" as const },
-  { title: "Sort or fold laundry", detail: "Growing helper", icon: "🧺", points: 12, cadence: "weekly" as const },
-  { title: "Sweep or vacuum a room", detail: "Growing helper", icon: "🧹", points: 15, cadence: "weekly" as const },
-  { title: "Unload the dishwasher", detail: "Growing helper", icon: "🍽️", points: 15, cadence: "weekly" as const },
-  { title: "Help prepare a meal", detail: "With adult supervision", icon: "🥗", points: 18, cadence: "weekly" as const },
-  { title: "Take out the trash", detail: "Independent helper", icon: "🗑️", points: 15, cadence: "weekly" as const },
-  { title: "Change your bedsheets", detail: "Independent helper", icon: "🛏️", points: 20, cadence: "weekly" as const },
-  { title: "Clean the bathroom sink", detail: "Independent helper", icon: "🧽", points: 20, cadence: "weekly" as const },
-  { title: "Help Dad with a project", detail: "Family teamwork", icon: "🛠️", points: 25, cadence: "weekly" as const },
+const suggestedChores: SuggestedChore[] = [
+  { title: "Empty your lunchbox", detail: "Put containers away and bring dishes to the kitchen", icon: "🥪", points: 8, cadence: "daily", routine: "afternoon", area: "kitchen" },
+  { title: "Pack tomorrow’s backpack", detail: "Check papers, homework, and school supplies", icon: "🎒", points: 10, cadence: "daily", routine: "evening", area: "bedroom" },
+  { title: "Put dirty clothes in the hamper", detail: "Keep bedroom and bathroom floors clear", icon: "👕", points: 5, cadence: "daily", routine: "evening", area: "bedroom" },
+  { title: "Clear dishes after meals", detail: "Bring your cup, plate, and utensils to the kitchen", icon: "🍽️", points: 7, cadence: "daily", routine: "anytime", area: "kitchen" },
+  { title: "Read for 15 minutes", detail: "Choose a book and enjoy some quiet reading", icon: "📚", points: 10, cadence: "daily", routine: "evening", area: "bedroom" },
+  { title: "Set out tomorrow’s clothes", detail: "Choose an outfit and place it somewhere tidy", icon: "👚", points: 7, cadence: "daily", routine: "evening", area: "bedroom" },
+  { title: "Help prepare dinner", detail: "Choose a safe job and work together", icon: "🥗", points: 15, cadence: "weekly", routine: "evening", area: "kitchen", team: true },
+  { title: "Ten-minute family pickup", detail: "Everyone chooses an area and tidies together", icon: "⏱️", points: 12, cadence: "daily", routine: "evening", area: "family", team: true },
+  { title: "Pack or unpack for visits", detail: "Use the family calendar and visit checklist", icon: "🧳", points: 18, cadence: "flexible", routine: "anytime", area: "bedroom" },
+  { title: "Do one helpful job without being asked", detail: "Notice what the family needs and lend a hand", icon: "💛", points: 15, cadence: "daily", routine: "anytime", area: "family" },
+  { title: "Set or clear the table", detail: "Choose a safe kitchen job", icon: "🍽️", points: 8, cadence: "daily", routine: "evening", area: "kitchen" },
+  { title: "Feed a pet", detail: "Follow the pet’s regular routine", icon: "🐾", points: 8, cadence: "daily", routine: "anytime", area: "family" },
+  { title: "Water plants", detail: "Check the soil first", icon: "🪴", points: 8, cadence: "weekly", routine: "anytime", area: "family" },
+  { title: "Sort or fold laundry", detail: "Match socks or fold age-appropriate items", icon: "🧺", points: 12, cadence: "weekly", routine: "anytime", area: "bedroom" },
+  { title: "Sweep or vacuum a room", detail: "Choose one safe area", icon: "🧹", points: 15, cadence: "weekly", routine: "anytime", area: "family" },
+  { title: "Unload the dishwasher", detail: "Only handle age-appropriate dishes", icon: "🍽️", points: 15, cadence: "weekly", routine: "afternoon", area: "kitchen" },
+  { title: "Take out the trash", detail: "Ask for help with heavy bags", icon: "🗑️", points: 15, cadence: "weekly", routine: "anytime", area: "family" },
+  { title: "Change your bedsheets", detail: "Ask for help with fitted corners", icon: "🛏️", points: 20, cadence: "weekly", routine: "anytime", area: "bedroom" },
+  { title: "Clean the bathroom sink", detail: "Use only parent-approved supplies", icon: "🧽", points: 20, cadence: "weekly", routine: "anytime", area: "bathroom" },
+  { title: "Help Dad with a project", detail: "Choose a safe role and work together", icon: "🛠️", points: 25, cadence: "weekly", routine: "anytime", area: "family", team: true },
 ];
 const starterState: AppState = {
   household: "The Petrous Family",
@@ -392,9 +401,13 @@ export function ChoreChart() {
     persist({ ...state, members, pointPolicy, notificationSettings, accessibilitySettings }); setShowPeople(false);
   };
 
-  const addSuggestion = (suggestion: typeof suggestedChores[number]) => {
+  const addSuggestion = (suggestion: SuggestedChore) => {
+    if (suggestion.team) {
+      const chore: Chore = { ...suggestion, id: `team-${Date.now()}`, memberId: state.members[0].id, memberIds: state.members.map((member) => member.id), teamMode: "everyone", teamBonus: 5, weeklyGoal: suggestion.cadence === "flexible" ? 2 : undefined, dueDay: suggestion.cadence === "weekly" ? selectedDate.getDay() : undefined, roles: Object.fromEntries(state.members.map((member) => [member.id, "Choose one part and help the team"])) };
+      persist({ ...state, chores: [...state.chores, chore] }); return;
+    }
     const assignees = suggestionMember === "all" ? state.members.map((member) => member.id) : [suggestionMember];
-    const chores: Chore[] = assignees.map((memberId, index) => ({ id: `${memberId}-${Date.now()}-${index}`, ...suggestion, routine: "anytime", memberId, ...(suggestion.cadence === "weekly" ? { dueDay: selectedDate.getDay() } : {}) }));
+    const chores: Chore[] = assignees.map((memberId, index) => ({ id: `${memberId}-${Date.now()}-${index}`, ...suggestion, memberId, ...(suggestion.cadence === "weekly" ? { dueDay: selectedDate.getDay() } : {}), ...(suggestion.cadence === "flexible" ? { weeklyGoal: 2 } : {}) }));
     persist({ ...state, chores: [...state.chores, ...chores] });
   };
 
@@ -640,7 +653,7 @@ export function ChoreChart() {
       <button type="button" className="close" onClick={() => setShowSuggestions(false)} aria-label="Close">×</button><p className="eyebrow">Ready-to-assign ideas</p><h2 id="suggestion-title">Chore library</h2>
       <p className="modalIntro">Choose the child, then tap any idea to add it. Start with tasks they can do safely and add responsibility as their skills grow.</p>
       <label>Assign ideas to<select value={suggestionMember} onChange={(event) => setSuggestionMember(event.target.value)}><option value="all">Everyone</option>{state.members.map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select></label>
-      <div className="suggestionList">{suggestedChores.map((suggestion) => <button type="button" key={suggestion.title} onClick={() => addSuggestion(suggestion)}><span>{suggestion.icon}</span><span><strong>{suggestion.title}</strong><small>{suggestion.detail} · {suggestion.cadence}</small></span><b>＋</b></button>)}</div>
+      <div className="suggestionList">{suggestedChores.map((suggestion) => <button type="button" key={suggestion.title} onClick={() => addSuggestion(suggestion)}><span>{suggestion.icon}</span><span><strong>{suggestion.title}</strong><small>{suggestion.detail} · {suggestion.team ? "team chore" : `${routineLabel(suggestion.routine)} · ${repeatLabel({ ...suggestion, id: "idea", memberId: "idea" })}`}</small></span><b>＋</b></button>)}</div>
     </section></div>}
 
     {showRewardEditor && <div className="modalBackdrop" onMouseDown={(event) => event.target === event.currentTarget && setShowRewardEditor(false)}><form className="modal" action={addReward}>
