@@ -9,7 +9,7 @@ type Chore = { id: string; title: string; detail: string; icon: string; points: 
 type Completion = { choreId: string; date: string };
 type Reward = { id: string; title: string; detail: string; emoji: string; cost: number };
 type Redemption = { id: string; rewardId: string; rewardTitle: string; memberId: string; cost: number; redeemedAt: string; status?: "pending" | "approved" };
-type AppState = { household: string; members: Member[]; chores: Chore[]; completions: Completion[]; rewards: Reward[]; redemptions: Redemption[] };
+type AppState = { household: string; members: Member[]; chores: Chore[]; completions: Completion[]; rewards: Reward[]; redemptions: Redemption[]; removedDefaultChoreIds: string[] };
 type CalendarEvent = { id: string; title: string; start: string; end: string; allDay: boolean; location: string; calendar: string; type: "kids" | "work" | "family"; color: string };
 
 const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -30,6 +30,8 @@ const coreChores = [
   { slug: "bed", title: "Make your bed", detail: "Start the day tidy", icon: "🛏️", points: 5, routine: "morning" as Routine },
   { slug: "kind", title: "Do something kind", detail: "Help or encourage someone", icon: "💛", points: 10, routine: "anytime" as Routine },
   { slug: "tidy", title: "Tidy your things", detail: "Toys, clothes & belongings", icon: "🧸", points: 8, routine: "evening" as Routine },
+  { slug: "bath", title: "Take a shower or bath", detail: "Get squeaky clean", icon: "🛁", points: 10, routine: "evening" as Routine },
+  { slug: "room", title: "Clean your room", detail: "Put things back where they belong", icon: "🧹", points: 15, routine: "evening" as Routine },
 ] as const;
 const suggestedChores = [
   { title: "Put dirty clothes in the hamper", detail: "Little helper", icon: "👕", points: 5, cadence: "daily" as const },
@@ -75,6 +77,7 @@ const starterState: AppState = {
   completions: [],
   rewards: starterRewards,
   redemptions: [],
+  removedDefaultChoreIds: [],
 };
 
 function normalizeState(saved: AppState): AppState {
@@ -89,6 +92,8 @@ function normalizeState(saved: AppState): AppState {
     if (value.includes("make") && value.includes("bed")) return "bed";
     if (value.includes("something kind")) return "kind";
     if (value.includes("tidy your things") || value.includes("pick up your toys")) return "tidy";
+    if (value.includes("shower") || value.includes("bath")) return "bath";
+    if (value.includes("clean your room")) return "room";
     return null;
   };
   const replacedIds = new Map<string, string>();
@@ -97,9 +102,10 @@ function normalizeState(saved: AppState): AppState {
     if (slug) replacedIds.set(chore.id, `${chore.memberId}-${slug}`);
     return !slug;
   });
-  for (const member of members) for (const core of coreChores) chores.push({ id: `${member.id}-${core.slug}`, title: core.title, detail: core.detail, icon: core.icon, points: core.points, routine: core.routine, memberId: member.id, cadence: "daily" });
+  const removedDefaultChoreIds = saved.removedDefaultChoreIds ?? [];
+  for (const member of members) for (const core of coreChores) if (!removedDefaultChoreIds.includes(`${member.id}-${core.slug}`)) chores.push({ id: `${member.id}-${core.slug}`, title: core.title, detail: core.detail, icon: core.icon, points: core.points, routine: core.routine, memberId: member.id, cadence: "daily" });
   const completions = Array.from(new Map(saved.completions.map((item) => { const mapped = { ...item, choreId: replacedIds.get(item.choreId) || item.choreId }; return [`${mapped.choreId}-${mapped.date}`, mapped]; })).values());
-  return { ...saved, members, chores, completions, rewards: saved.rewards ?? starterRewards, redemptions: saved.redemptions ?? [] };
+  return { ...saved, members, chores, completions, rewards: saved.rewards ?? starterRewards, redemptions: saved.redemptions ?? [], removedDefaultChoreIds };
 }
 
 const iso = (date = new Date()) => date.toISOString().slice(0, 10);
@@ -228,6 +234,12 @@ export function ChoreChart() {
     setEditingChore(null);
   };
 
+  const deleteChore = (chore: Chore) => {
+    const isDefault = coreChores.some((item) => `${chore.memberId}-${item.slug}` === chore.id);
+    persist({ ...state, chores: state.chores.filter((item) => item.id !== chore.id), completions: state.completions.filter((item) => item.choreId !== chore.id), removedDefaultChoreIds: isDefault ? Array.from(new Set([...state.removedDefaultChoreIds, chore.id])) : state.removedDefaultChoreIds });
+    setEditingChore(null);
+  };
+
   const savePeople = (form: FormData) => {
     const members = state.members.map((member) => { const name = String(form.get(`${member.id}-name`) || member.name).trim(); return { ...member, name, initial: name.slice(0, 1).toUpperCase(), celebrationEmoji: String(form.get(`${member.id}-emoji`) || member.celebrationEmoji), celebrationMessage: String(form.get(`${member.id}-message`) || member.celebrationMessage).trim() }; });
     persist({ ...state, members }); setShowPeople(false);
@@ -314,7 +326,7 @@ export function ChoreChart() {
       })}{visibleChores.length === 0 && <div className="empty"><span>☀️</span><h2>All clear</h2><p>No chores are scheduled for this view.</p></div>}</div>
       : <div className="weeklyTable"><div className="weeklyHead"><span>Chore</span>{weekDates.map((date) => <span key={iso(date)}>{dayNames[date.getDay()]}</span>)}</div>{visibleChores.map((chore) => {
         const member = state.members.find((entry) => entry.id === chore.memberId)!;
-        return <div className="weeklyRow" key={chore.id}><div><b>{chore.icon} {chore.title}</b><small style={{ color: chore.memberIds?.length ? "#6957d5" : member.color }}>{chore.memberIds?.length ? "Tidy Team" : member.name} · {chore.points} pts{chore.memberIds?.length ? " each" : ""}</small></div>{weekDates.map((date) => {
+        return <div className="weeklyRow" key={chore.id}><div className="weeklyChoreName"><b>{chore.icon} {chore.title}</b><small style={{ color: chore.memberIds?.length ? "#6957d5" : member.color }}>{chore.memberIds?.length ? "Tidy Team" : member.name} · {chore.points} pts{chore.memberIds?.length ? " each" : ""}</small>{isParent && <button className="weeklyEdit" onClick={() => setEditingChore(chore)} aria-label={`Edit or remove ${chore.title}`}>✎ Edit</button>}</div>{weekDates.map((date) => {
           const allowed = scheduledOn(chore, date); const done = isComplete(chore.id, iso(date));
           return <button key={iso(date)} disabled={!allowed} className={done ? "complete" : ""} onClick={() => toggle(chore.id, iso(date))} aria-label={`${chore.title}, ${dayNames[date.getDay()]}`}>{allowed ? (done ? "✓" : "○") : "—"}</button>;
         })}</div>;
@@ -343,7 +355,7 @@ export function ChoreChart() {
       <label>Repeats<select name="cadence" defaultValue={editingChore.cadence}><option value="daily">Every day</option><option value="weekly">Every week</option><option value="monthly">Every month</option></select></label>
       <div className="formRow"><label>Weekly day<select name="dueDay" defaultValue={editingChore.dueDay ?? selectedDate.getDay()}>{dayNames.map((day, index) => <option key={day} value={index}>{day}</option>)}</select></label><label>Monthly date<input name="dueDate" type="number" min="1" max="31" defaultValue={editingChore.dueDate ?? selectedDate.getDate()} /></label></div>
       <p className="fieldHint">Only the matching weekly day or monthly date will be used.</p>
-      <div className="modalActions"><button type="button" className="deleteButton" onClick={() => { persist({ ...state, chores: state.chores.filter((chore) => chore.id !== editingChore.id), completions: state.completions.filter((item) => item.choreId !== editingChore.id) }); setEditingChore(null); }}>Delete</button><button className="saveButton" type="submit">Save changes</button></div>
+      <div className="modalActions"><button type="button" className="deleteButton" onClick={() => deleteChore(editingChore)}>Remove chore</button><button className="saveButton" type="submit">Save changes</button></div>
     </form></div>}
 
     {showPeople && <div className="modalBackdrop" onMouseDown={(event) => event.target === event.currentTarget && setShowPeople(false)}><form className="modal" action={savePeople}>
