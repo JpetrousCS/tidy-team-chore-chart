@@ -36,3 +36,17 @@ export async function ensureAuthTables() {
   )`;
   return sql;
 }
+
+export async function ensureCalendarTable() {
+  const sql = getDb();
+  if (!sql) return null;
+  await sql`CREATE TABLE IF NOT EXISTS calendar_feeds (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    url TEXT NOT NULL,
+    type TEXT NOT NULL DEFAULT 'family',
+    color TEXT NOT NULL DEFAULT '#e76f35',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`;
+  return sql;
+}
