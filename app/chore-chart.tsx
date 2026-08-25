@@ -4,10 +4,11 @@ import { useEffect, useMemo, useState } from "react";
 
 type Member = { id: string; name: string; initial: string; color: string; celebrationEmoji: string; celebrationMessage: string };
 type Cadence = "daily" | "weekly" | "monthly";
-type Chore = { id: string; title: string; detail: string; icon: string; points: number; memberId: string; cadence: Cadence; dueDay?: number; dueDate?: number };
+type Routine = "morning" | "afternoon" | "evening" | "anytime";
+type Chore = { id: string; title: string; detail: string; icon: string; points: number; memberId: string; cadence: Cadence; routine?: Routine; dueDay?: number; dueDate?: number };
 type Completion = { choreId: string; date: string };
 type Reward = { id: string; title: string; detail: string; emoji: string; cost: number };
-type Redemption = { id: string; rewardId: string; rewardTitle: string; memberId: string; cost: number; redeemedAt: string };
+type Redemption = { id: string; rewardId: string; rewardTitle: string; memberId: string; cost: number; redeemedAt: string; status?: "pending" | "approved" };
 type AppState = { household: string; members: Member[]; chores: Chore[]; completions: Completion[]; rewards: Reward[]; redemptions: Redemption[] };
 type CalendarEvent = { id: string; title: string; start: string; end: string; allDay: boolean; location: string; calendar: string; type: "kids" | "work" | "family"; color: string };
 
@@ -20,10 +21,10 @@ const starterRewards: Reward[] = [
   { id: "kids-empire", title: "Visit to Kids Empire", detail: "Indoor play adventure", emoji: "🏰", cost: 350 },
 ];
 const coreChores = [
-  { slug: "teeth", title: "Brush your teeth", detail: "Morning & bedtime", icon: "🪥", points: 5 },
-  { slug: "bed", title: "Make your bed", detail: "Start the day tidy", icon: "🛏️", points: 5 },
-  { slug: "kind", title: "Do something kind", detail: "Help or encourage someone", icon: "💛", points: 10 },
-  { slug: "tidy", title: "Tidy your things", detail: "Toys, clothes & belongings", icon: "🧸", points: 8 },
+  { slug: "teeth", title: "Brush your teeth", detail: "Morning & bedtime", icon: "🪥", points: 5, routine: "morning" as Routine },
+  { slug: "bed", title: "Make your bed", detail: "Start the day tidy", icon: "🛏️", points: 5, routine: "morning" as Routine },
+  { slug: "kind", title: "Do something kind", detail: "Help or encourage someone", icon: "💛", points: 10, routine: "anytime" as Routine },
+  { slug: "tidy", title: "Tidy your things", detail: "Toys, clothes & belongings", icon: "🧸", points: 8, routine: "evening" as Routine },
 ] as const;
 const suggestedChores = [
   { title: "Put dirty clothes in the hamper", detail: "Little helper", icon: "👕", points: 5, cadence: "daily" as const },
@@ -91,7 +92,7 @@ function normalizeState(saved: AppState): AppState {
     if (slug) replacedIds.set(chore.id, `${chore.memberId}-${slug}`);
     return !slug;
   });
-  for (const member of members) for (const core of coreChores) chores.push({ id: `${member.id}-${core.slug}`, title: core.title, detail: core.detail, icon: core.icon, points: core.points, memberId: member.id, cadence: "daily" });
+  for (const member of members) for (const core of coreChores) chores.push({ id: `${member.id}-${core.slug}`, title: core.title, detail: core.detail, icon: core.icon, points: core.points, routine: core.routine, memberId: member.id, cadence: "daily" });
   const completions = Array.from(new Map(saved.completions.map((item) => { const mapped = { ...item, choreId: replacedIds.get(item.choreId) || item.choreId }; return [`${mapped.choreId}-${mapped.date}`, mapped]; })).values());
   return { ...saved, members, chores, completions, rewards: saved.rewards ?? starterRewards, redemptions: saved.redemptions ?? [] };
 }
@@ -101,6 +102,7 @@ const addDays = (date: Date, amount: number) => { const next = new Date(date); n
 const startOfWeek = (date: Date) => addDays(date, -date.getDay());
 const scheduledOn = (chore: Chore, date: Date) => chore.cadence === "daily" || (chore.cadence === "weekly" && chore.dueDay === date.getDay()) || (chore.cadence === "monthly" && chore.dueDate === date.getDate());
 const repeatLabel = (chore: Chore) => chore.cadence === "daily" ? "Every day" : chore.cadence === "weekly" ? `Every ${dayNames[chore.dueDay ?? 0]}` : `Monthly on day ${chore.dueDate ?? 1}`;
+const routineLabel = (routine: Routine = "anytime") => routine === "morning" ? "☀️ Morning" : routine === "afternoon" ? "🎒 After school" : routine === "evening" ? "🌙 Evening" : "✨ Anytime";
 
 export function ChoreChart() {
   const [state, setState] = useState<AppState>(() => normalizeState(starterState));
@@ -112,6 +114,9 @@ export function ChoreChart() {
   const [showPeople, setShowPeople] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [showRewardEditor, setShowRewardEditor] = useState(false);
+  const [showPin, setShowPin] = useState(false);
+  const [isParent, setIsParent] = useState(false);
+  const [pinError, setPinError] = useState("");
   const [suggestionMember, setSuggestionMember] = useState("charli");
   const [rewardMember, setRewardMember] = useState("charli");
   const [celebration, setCelebration] = useState<{ emoji: string; color: string; name: string; message: string } | null>(null);
@@ -187,26 +192,29 @@ export function ChoreChart() {
   const pointsByMember = state.members.map((member) => ({ ...member, earned: state.completions.reduce((sum, item) => {
     const chore = state.chores.find((entry) => entry.id === item.choreId && entry.memberId === member.id);
     return sum + (chore ? chore.points : 0);
-  }, 0), spent: state.redemptions.filter((item) => item.memberId === member.id).reduce((sum, item) => sum + item.cost, 0) })).map((member) => ({ ...member, points: member.earned - member.spent })).sort((a, b) => b.points - a.points);
+  }, 0), spent: state.redemptions.filter((item) => item.memberId === member.id && item.status !== "pending").reduce((sum, item) => sum + item.cost, 0) })).map((member) => ({ ...member, points: member.earned - member.spent })).sort((a, b) => b.points - a.points);
   const rewardKid = pointsByMember.find((member) => member.id === rewardMember) ?? pointsByMember[0];
 
   const addChore = (form: FormData) => {
     const title = String(form.get("title") || "").trim();
     if (!title) return;
     const cadence = String(form.get("cadence")) as Cadence;
-    const chore: Chore = {
-      id: `${Date.now()}`, title, detail: String(form.get("detail") || "").trim() || "Custom family job",
+    const assignee = String(form.get("memberId"));
+    const base = {
+      title, detail: String(form.get("detail") || "").trim() || "Custom family job",
       icon: String(form.get("icon") || "✨"), points: Number(form.get("points")) || 5,
-      memberId: String(form.get("memberId")), cadence, ...(cadence === "weekly" ? { dueDay: Number(form.get("dueDay")) } : {}), ...(cadence === "monthly" ? { dueDate: Number(form.get("dueDate")) } : {}),
+      cadence, routine: String(form.get("routine")) as Routine, ...(cadence === "weekly" ? { dueDay: Number(form.get("dueDay")) } : {}), ...(cadence === "monthly" ? { dueDate: Number(form.get("dueDate")) } : {}),
     };
-    persist({ ...state, chores: [...state.chores, chore] });
+    const assignees = assignee === "all" ? state.members.map((member) => member.id) : [assignee];
+    const chores = assignees.map((memberId, index) => ({ id: `${Date.now()}-${index}`, memberId, ...base }));
+    persist({ ...state, chores: [...state.chores, ...chores] });
     setShowAdd(false);
   };
 
   const saveChore = (form: FormData) => {
     if (!editingChore) return;
     const cadence = String(form.get("cadence")) as Cadence;
-    const updated: Chore = { ...editingChore, title: String(form.get("title") || editingChore.title), detail: String(form.get("detail") || editingChore.detail), icon: String(form.get("icon")), points: Number(form.get("points")) || 1, memberId: String(form.get("memberId")), cadence, dueDay: cadence === "weekly" ? Number(form.get("dueDay")) : undefined, dueDate: cadence === "monthly" ? Number(form.get("dueDate")) : undefined };
+    const updated: Chore = { ...editingChore, title: String(form.get("title") || editingChore.title), detail: String(form.get("detail") || editingChore.detail), icon: String(form.get("icon")), points: Number(form.get("points")) || 1, memberId: String(form.get("memberId")), cadence, routine: String(form.get("routine")) as Routine, dueDay: cadence === "weekly" ? Number(form.get("dueDay")) : undefined, dueDate: cadence === "monthly" ? Number(form.get("dueDate")) : undefined };
     persist({ ...state, chores: state.chores.map((chore) => chore.id === updated.id ? updated : chore) });
     setEditingChore(null);
   };
@@ -217,16 +225,29 @@ export function ChoreChart() {
   };
 
   const addSuggestion = (suggestion: typeof suggestedChores[number]) => {
-    const chore: Chore = { id: `${suggestionMember}-${Date.now()}`, ...suggestion, memberId: suggestionMember, ...(suggestion.cadence === "weekly" ? { dueDay: selectedDate.getDay() } : {}) };
-    persist({ ...state, chores: [...state.chores, chore] });
+    const assignees = suggestionMember === "all" ? state.members.map((member) => member.id) : [suggestionMember];
+    const chores: Chore[] = assignees.map((memberId, index) => ({ id: `${memberId}-${Date.now()}-${index}`, ...suggestion, routine: "anytime", memberId, ...(suggestion.cadence === "weekly" ? { dueDay: selectedDate.getDay() } : {}) }));
+    persist({ ...state, chores: [...state.chores, ...chores] });
   };
 
   const redeemReward = (reward: Reward) => {
     if (!rewardKid || rewardKid.points < reward.cost) return;
-    const redemption: Redemption = { id: `${Date.now()}`, rewardId: reward.id, rewardTitle: reward.title, memberId: rewardKid.id, cost: reward.cost, redeemedAt: new Date().toISOString() };
+    const redemption: Redemption = { id: `${Date.now()}`, rewardId: reward.id, rewardTitle: reward.title, memberId: rewardKid.id, cost: reward.cost, redeemedAt: new Date().toISOString(), status: "pending" };
     persist({ ...state, redemptions: [...state.redemptions, redemption] });
-    setCelebration({ emoji: reward.emoji, color: rewardKid.color, name: rewardKid.name, message: "Reward unlocked—enjoy it," });
+    setCelebration({ emoji: reward.emoji, color: rewardKid.color, name: rewardKid.name, message: "Reward request sent for" });
     window.setTimeout(() => setCelebration(null), 1800);
+  };
+
+  const approveRedemption = (redemption: Redemption) => {
+    const member = pointsByMember.find((item) => item.id === redemption.memberId);
+    if (!member || member.points < redemption.cost) return;
+    persist({ ...state, redemptions: state.redemptions.map((item) => item.id === redemption.id ? { ...item, status: "approved" } : item) });
+  };
+
+  const unlockParent = async (form: FormData) => {
+    setPinError("");
+    const response = await fetch("/api/parent-pin", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ pin: String(form.get("pin") || "") }) });
+    if (response.ok) { setIsParent(true); setShowPin(false); } else setPinError("That PIN didn’t match. Try again.");
   };
 
   const addReward = (form: FormData) => {
@@ -240,7 +261,7 @@ export function ChoreChart() {
   return <main className="shell">
     <header className="topbar">
       <a className="brand" href="#top"><span className="brandMark">✓</span><span>Tidy Team</span></a>
-      <button className="household" onClick={() => setShowPeople(true)} aria-label="Edit household members"><span className="avatarStack">{state.members.map((m) => <i key={m.id} style={{ background: m.color }}>{m.initial}</i>)}</span><span><strong>{state.household}</strong><small>{syncLabel} · Edit</small></span></button>
+      <div className="headerActions"><button className={`parentButton ${isParent ? "unlocked" : ""}`} onClick={() => isParent ? setIsParent(false) : setShowPin(true)}>{isParent ? "🔓 Parent mode" : "🔒 Parent"}</button><button className="household" onClick={() => isParent ? setShowPeople(true) : setShowPin(true)} aria-label="Edit household members"><span className="avatarStack">{state.members.map((m) => <i key={m.id} style={{ background: m.color }}>{m.initial}</i>)}</span><span><strong>{state.household}</strong><small>{syncLabel} · {isParent ? "Edit" : "Locked"}</small></span></button></div>
     </header>
 
     <section className="hero" id="top">
@@ -259,25 +280,25 @@ export function ChoreChart() {
     </section>
 
     <section className="rewardsShop" aria-labelledby="rewards-heading">
-      <div className="rewardsTop"><div><p className="eyebrow">Spend your stars</p><h2 id="rewards-heading">Rewards Shop</h2></div><button className="ideaButton" onClick={() => setShowRewardEditor(true)}>＋ Custom reward</button></div>
+      <div className="rewardsTop"><div><p className="eyebrow">Spend your stars</p><h2 id="rewards-heading">Rewards Shop</h2><small>Stars roll over every month and never expire.</small></div>{isParent && <button className="ideaButton" onClick={() => setShowRewardEditor(true)}>＋ Custom reward</button>}</div>
       <div className="rewardMembers">{pointsByMember.map((member) => <button key={member.id} className={rewardMember === member.id ? "active" : ""} onClick={() => setRewardMember(member.id)}><span style={{ background: member.color }}>{member.initial}</span><strong>{member.name}</strong><b>⭐ {member.points}</b></button>)}</div>
       <div className="rewardRail">{state.rewards.map((reward) => { const affordable = Boolean(rewardKid && rewardKid.points >= reward.cost); return <article className="rewardCard" key={reward.id}><span>{reward.emoji}</span><div><h3>{reward.title}</h3><p>{reward.detail}</p></div><button disabled={!affordable} onClick={() => redeemReward(reward)}>{affordable ? `Redeem · ⭐ ${reward.cost}` : `Need ⭐ ${reward.cost}`}</button></article>; })}</div>
-      {state.redemptions.length > 0 && <details className="rewardHistory"><summary>Recent rewards</summary>{state.redemptions.slice(-5).reverse().map((item) => { const member = state.members.find((entry) => entry.id === item.memberId); return <p key={item.id}><span>{member?.name} redeemed <strong>{item.rewardTitle}</strong> for ⭐ {item.cost}</span><button onClick={() => persist({ ...state, redemptions: state.redemptions.filter((entry) => entry.id !== item.id) })}>Undo</button></p>; })}</details>}
+      {state.redemptions.length > 0 && <details className="rewardHistory" open={isParent && state.redemptions.some((item) => item.status === "pending")}><summary>{state.redemptions.some((item) => item.status === "pending") ? "Reward requests waiting" : "Recent rewards"}</summary>{state.redemptions.slice(-8).reverse().map((item) => { const member = state.members.find((entry) => entry.id === item.memberId); return <p key={item.id}><span>{item.status === "pending" ? "⏳" : "✓"} {member?.name} requested <strong>{item.rewardTitle}</strong> for ⭐ {item.cost}</span>{isParent && <span className="historyActions">{item.status === "pending" && <button onClick={() => approveRedemption(item)}>Approve</button>}<button onClick={() => persist({ ...state, redemptions: state.redemptions.filter((entry) => entry.id !== item.id) })}>{item.status === "pending" ? "Decline" : "Undo"}</button></span>}</p>; })}</details>}
     </section>
 
     <section className="dashboard" aria-label="Chore chart">
       <div className="controls">
         <div className="tabs"><button className={tab === "today" ? "active" : ""} onClick={() => setTab("today")}>My day</button><button className={tab === "week" ? "active" : ""} onClick={() => setTab("week")}>Our week</button></div>
         <div className="memberFilters"><button className={activeMember === "all" ? "active" : ""} onClick={() => setActiveMember("all")}>Everyone</button>{state.members.map((m) => <button key={m.id} className={activeMember === m.id ? "active" : ""} onClick={() => setActiveMember(m.id)}><span style={{ background: m.color }}>{m.initial}</span>{m.name}</button>)}</div>
-        <button className="ideaButton" onClick={() => setShowSuggestions(true)}>💡 Chore ideas</button><button className="addButton" onClick={() => setShowAdd(true)}>＋ Add a job</button>
+        {isParent && <><button className="ideaButton" onClick={() => setShowSuggestions(true)}>💡 Chore ideas</button><button className="addButton" onClick={() => setShowAdd(true)}>＋ Add a job</button></>}
       </div>
       <div className="weekStrip">{weekDates.map((date) => <button key={iso(date)} className={iso(date) === selectedIso ? "active" : ""} onClick={() => setSelectedDate(date)}><span>{dayNames[date.getDay()]}</span><strong>{date.getDate()}</strong>{iso(date) === iso() && <i>Today</i>}</button>)}</div>
 
       {tab === "today" ? <div className="choreGrid">{visibleChores.map((chore) => {
         const member = state.members.find((entry) => entry.id === chore.memberId)!; const done = isComplete(chore.id);
         return <article className={`choreCard ${done ? "done" : ""}`} key={chore.id} style={{ "--member-color": member.color } as React.CSSProperties}>
-          <button className="check" onClick={() => toggle(chore.id)} aria-label={`${done ? "Mark incomplete" : "Complete"} ${chore.title}`}>{done ? "✓" : ""}</button><button className="editChore" onClick={() => setEditingChore(chore)} aria-label={`Edit ${chore.title}`}>✎</button>
-          <div className="choreIcon">{chore.icon}</div><div className="choreCopy"><h2>{chore.title}</h2><p>{chore.detail}</p><span className="repeatBadge">↻ {repeatLabel(chore)}</span></div>
+          <button className="check" onClick={() => toggle(chore.id)} aria-label={`${done ? "Mark incomplete" : "Complete"} ${chore.title}`}>{done ? "✓" : ""}</button>{isParent && <button className="editChore" onClick={() => setEditingChore(chore)} aria-label={`Edit ${chore.title}`}>✎</button>}
+          <div className="choreIcon">{chore.icon}</div><div className="choreCopy"><h2>{chore.title}</h2><p>{chore.detail}</p><span className="repeatBadge">↻ {repeatLabel(chore)}</span><span className="routineBadge">{routineLabel(chore.routine)}</span></div>
           <div className="cardMeta"><span className="assigned" style={{ color: member.color }}><i style={{ background: member.color }}>{member.initial}</i>{member.name}</span><strong>⭐ +{chore.points}</strong></div>
         </article>;
       })}{visibleChores.length === 0 && <div className="empty"><span>☀️</span><h2>All clear</h2><p>No chores are scheduled for this view.</p></div>}</div>
@@ -296,7 +317,8 @@ export function ChoreChart() {
       <label>Chore name<input name="title" placeholder="e.g. Sweep the kitchen" autoFocus required /></label>
       <label>Helpful note<input name="detail" placeholder="e.g. After dinner" /></label>
       <div className="formRow"><label>Icon<select name="icon" defaultValue="✨"><option>✨</option><option>🪥</option><option>🛏️</option><option>🧹</option><option>🧸</option><option>🛁</option><option>💜</option><option>💙</option><option>🛠️</option><option>🧺</option><option>🪴</option><option>🐾</option><option>♻️</option></select></label><label>Points<input name="points" type="number" min="1" max="100" defaultValue="10" /></label></div>
-      <div className="formRow"><label>Assigned to<select name="memberId">{state.members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select></label><label>Repeats<select name="cadence"><option value="daily">Every day</option><option value="weekly">Every week</option><option value="monthly">Every month</option></select></label></div>
+      <div className="formRow"><label>Assigned to<select name="memberId"><option value="all">Everyone</option>{state.members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select></label><label>Routine<select name="routine" defaultValue="anytime"><option value="morning">Morning</option><option value="afternoon">After school</option><option value="evening">Evening</option><option value="anytime">Anytime</option></select></label></div>
+      <label>Repeats<select name="cadence"><option value="daily">Every day</option><option value="weekly">Every week</option><option value="monthly">Every month</option></select></label>
       <div className="formRow"><label>Weekly day<select name="dueDay" defaultValue={selectedDate.getDay()}>{dayNames.map((day, index) => <option key={day} value={index}>{day}</option>)}</select></label><label>Monthly date<input name="dueDate" type="number" min="1" max="31" defaultValue={selectedDate.getDate()} /></label></div>
       <p className="fieldHint">Only the matching weekly day or monthly date will be used.</p>
       <button className="saveButton" type="submit">Add to the chart</button>
@@ -307,7 +329,8 @@ export function ChoreChart() {
       <label>Chore name<input name="title" defaultValue={editingChore.title} required /></label>
       <label>Helpful note<input name="detail" defaultValue={editingChore.detail} /></label>
       <div className="formRow"><label>Icon<select name="icon" defaultValue={editingChore.icon}><option>✨</option><option>🪥</option><option>🛏️</option><option>🧹</option><option>🧸</option><option>🛁</option><option>💜</option><option>💙</option><option>🛠️</option><option>🧺</option><option>🪴</option><option>🐾</option><option>♻️</option><option>🍽️</option></select></label><label>Points<input name="points" type="number" min="1" max="100" defaultValue={editingChore.points} /></label></div>
-      <div className="formRow"><label>Assigned to<select name="memberId" defaultValue={editingChore.memberId}>{state.members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select></label><label>Repeats<select name="cadence" defaultValue={editingChore.cadence}><option value="daily">Every day</option><option value="weekly">Every week</option><option value="monthly">Every month</option></select></label></div>
+      <div className="formRow"><label>Assigned to<select name="memberId" defaultValue={editingChore.memberId}>{state.members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select></label><label>Routine<select name="routine" defaultValue={editingChore.routine ?? "anytime"}><option value="morning">Morning</option><option value="afternoon">After school</option><option value="evening">Evening</option><option value="anytime">Anytime</option></select></label></div>
+      <label>Repeats<select name="cadence" defaultValue={editingChore.cadence}><option value="daily">Every day</option><option value="weekly">Every week</option><option value="monthly">Every month</option></select></label>
       <div className="formRow"><label>Weekly day<select name="dueDay" defaultValue={editingChore.dueDay ?? selectedDate.getDay()}>{dayNames.map((day, index) => <option key={day} value={index}>{day}</option>)}</select></label><label>Monthly date<input name="dueDate" type="number" min="1" max="31" defaultValue={editingChore.dueDate ?? selectedDate.getDate()} /></label></div>
       <p className="fieldHint">Only the matching weekly day or monthly date will be used.</p>
       <div className="modalActions"><button type="button" className="deleteButton" onClick={() => { persist({ ...state, chores: state.chores.filter((chore) => chore.id !== editingChore.id), completions: state.completions.filter((item) => item.choreId !== editingChore.id) }); setEditingChore(null); }}>Delete</button><button className="saveButton" type="submit">Save changes</button></div>
@@ -323,7 +346,7 @@ export function ChoreChart() {
     {showSuggestions && <div className="modalBackdrop" onMouseDown={(event) => event.target === event.currentTarget && setShowSuggestions(false)}><section className="modal suggestionModal" role="dialog" aria-modal="true" aria-labelledby="suggestion-title">
       <button type="button" className="close" onClick={() => setShowSuggestions(false)} aria-label="Close">×</button><p className="eyebrow">Ready-to-assign ideas</p><h2 id="suggestion-title">Chore library</h2>
       <p className="modalIntro">Choose the child, then tap any idea to add it. Start with tasks they can do safely and add responsibility as their skills grow.</p>
-      <label>Assign ideas to<select value={suggestionMember} onChange={(event) => setSuggestionMember(event.target.value)}>{state.members.map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select></label>
+      <label>Assign ideas to<select value={suggestionMember} onChange={(event) => setSuggestionMember(event.target.value)}><option value="all">Everyone</option>{state.members.map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select></label>
       <div className="suggestionList">{suggestedChores.map((suggestion) => <button type="button" key={suggestion.title} onClick={() => addSuggestion(suggestion)}><span>{suggestion.icon}</span><span><strong>{suggestion.title}</strong><small>{suggestion.detail} · {suggestion.cadence}</small></span><b>＋</b></button>)}</div>
     </section></div>}
 
@@ -334,6 +357,11 @@ export function ChoreChart() {
       <div className="formRow"><label>Emoji<select name="emoji" defaultValue="🎁"><option>🎁</option><option>📱</option><option>🎮</option><option>🍦</option><option>⛳</option><option>🏰</option><option>🎬</option><option>🍕</option><option>🛝</option><option>⭐</option></select></label><label>Star cost<input name="cost" type="number" min="1" max="10000" defaultValue="100" /></label></div>
       <button className="saveButton" type="submit">Add to the shop</button>
       {state.rewards.length > 0 && <div className="manageRewards"><strong>Current rewards</strong>{state.rewards.map((reward) => <div key={reward.id}><span>{reward.emoji} {reward.title} · ⭐ {reward.cost}</span><button type="button" onClick={() => persist({ ...state, rewards: state.rewards.filter((item) => item.id !== reward.id) })}>Remove</button></div>)}</div>}
+    </form></div>}
+
+    {showPin && <div className="modalBackdrop" onMouseDown={(event) => event.target === event.currentTarget && setShowPin(false)}><form className="modal pinModal" action={unlockParent}>
+      <button type="button" className="close" onClick={() => setShowPin(false)} aria-label="Close">×</button><p className="eyebrow">Grown-ups only</p><h2>Unlock Parent Mode</h2><p className="modalIntro">Enter the four-digit family PIN to edit chores, manage rewards, or approve redemptions.</p>
+      <label>Parent PIN<input name="pin" type="password" inputMode="numeric" pattern="[0-9]{4}" maxLength={4} autoComplete="off" autoFocus required /></label>{pinError && <p className="pinError" role="alert">{pinError}</p>}<button className="saveButton" type="submit">Unlock</button>
     </form></div>}
 
     {celebration && <div className="celebration" aria-live="polite" style={{ "--celebrate": celebration.color } as React.CSSProperties}><div className="burst"><i>✦</i><i>★</i><span>{celebration.emoji}</span><i>✦</i><i>★</i></div><strong>{celebration.message} {celebration.name}!</strong></div>}
