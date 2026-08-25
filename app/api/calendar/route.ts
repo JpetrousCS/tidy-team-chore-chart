@@ -1,4 +1,5 @@
 import ical, { type VEvent } from "node-ical";
+import { ensureCalendarTable } from "../../../lib/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -6,7 +7,7 @@ export const dynamic = "force-dynamic";
 type FeedConfig = { name: string; url: string; type?: "kids" | "work" | "family"; color?: string };
 const colors = { kids: "#b85dc7", work: "#3186c7", family: "#e76f35" };
 
-function getFeeds(): FeedConfig[] {
+function getEnvironmentFeeds(): FeedConfig[] {
   try {
     const parsed = JSON.parse(process.env.CALENDAR_FEEDS_JSON || "[]");
     return Array.isArray(parsed) ? parsed.filter((feed) => feed?.name && feed?.url?.startsWith("https://")) : [];
@@ -14,7 +15,9 @@ function getFeeds(): FeedConfig[] {
 }
 
 export async function GET(request: Request) {
-  const feeds = getFeeds();
+  const sql = await ensureCalendarTable();
+  const databaseFeeds = sql ? await sql`SELECT name, url, type, color FROM calendar_feeds ORDER BY created_at` as unknown as FeedConfig[] : [];
+  const feeds = [...getEnvironmentFeeds(), ...databaseFeeds];
   if (!feeds.length) return Response.json({ configured: false, events: [] });
   const requestUrl = new URL(request.url);
   const from = new Date(requestUrl.searchParams.get("from") || Date.now());
