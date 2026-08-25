@@ -3,17 +3,19 @@
 import { useEffect, useMemo, useState } from "react";
 import { platformAuthenticatorIsAvailable, startAuthentication, startRegistration } from "@simplewebauthn/browser";
 
-type Member = { id: string; name: string; initial: string; color: string; celebrationEmoji: string; celebrationMessage: string };
+type Member = { id: string; name: string; initial: string; color: string; celebrationEmoji: string; celebrationMessage: string; rewardGoalId?: string };
 type Cadence = "daily" | "weekly" | "monthly" | "flexible";
 type Routine = "morning" | "afternoon" | "evening" | "anytime";
 type Verification = "none" | "parent" | "photo" | "sibling";
-type Chore = { id: string; title: string; detail: string; icon: string; points: number; teamBonus?: number; verification?: Verification; memberId: string; memberIds?: string[]; cadence: Cadence; routine?: Routine; dueDay?: number; dueDate?: number; weeklyGoal?: number };
-type Completion = { id?: string; choreId: string; date: string; status?: "pending" | "approved"; proofPath?: string };
+type Chore = { id: string; title: string; detail: string; icon: string; points: number; teamBonus?: number; teamMode?: "one" | "everyone"; roles?: Record<string, string>; verification?: Verification; memberId: string; memberIds?: string[]; cadence: Cadence; routine?: Routine; dueDay?: number; dueDate?: number; weeklyGoal?: number };
+type Completion = { id?: string; choreId: string; date: string; status?: "pending" | "approved"; proofPath?: string; participantIds?: string[] };
 type Reward = { id: string; title: string; detail: string; emoji: string; cost: number };
 type Redemption = { id: string; rewardId: string; rewardTitle: string; memberId: string; cost: number; redeemedAt: string; status?: "pending" | "approved" };
+type PointAdjustment = { id: string; memberId: string; amount: number; note: string; createdAt: string };
 type PointPolicy = { reset: "never" | "weekly" | "monthly"; dailyEarnLimit: number; maxBalance: number };
-type NotificationSettings = { enabled: boolean; evening: boolean; rewards: boolean; calendar: boolean };
-type AppState = { household: string; members: Member[]; chores: Chore[]; completions: Completion[]; rewards: Reward[]; redemptions: Redemption[]; removedDefaultChoreIds: string[]; pointPolicy: PointPolicy; notificationSettings: NotificationSettings };
+type NotificationSettings = { enabled: boolean; evening: boolean; rewards: boolean; calendar: boolean; quietStart: string; quietEnd: string; memberIds: string[] };
+type AccessibilitySettings = { highContrast: boolean; largeText: boolean; reducedMotion: boolean; sounds: boolean; spokenChores: boolean };
+type AppState = { household: string; members: Member[]; chores: Chore[]; completions: Completion[]; rewards: Reward[]; redemptions: Redemption[]; adjustments: PointAdjustment[]; removedDefaultChoreIds: string[]; pointPolicy: PointPolicy; notificationSettings: NotificationSettings; accessibilitySettings: AccessibilitySettings };
 type CalendarEvent = { id: string; title: string; start: string; end: string; allDay: boolean; location: string; calendar: string; type: "kids" | "work" | "family"; color: string };
 
 const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -101,9 +103,11 @@ const starterState: AppState = {
   completions: [],
   rewards: starterRewards,
   redemptions: [],
+  adjustments: [],
   removedDefaultChoreIds: [],
   pointPolicy: { reset: "never", dailyEarnLimit: 0, maxBalance: 0 },
-  notificationSettings: { enabled: false, evening: true, rewards: true, calendar: true },
+  notificationSettings: { enabled: false, evening: true, rewards: true, calendar: true, quietStart: "20:00", quietEnd: "07:00", memberIds: ["charli", "andy", "henry"] },
+  accessibilitySettings: { highContrast: false, largeText: false, reducedMotion: false, sounds: false, spokenChores: false },
 };
 
 function normalizeState(saved: AppState): AppState {
@@ -132,7 +136,9 @@ function normalizeState(saved: AppState): AppState {
   const removedDefaultChoreIds = saved.removedDefaultChoreIds ?? [];
   for (const member of members) for (const core of coreChores) if (!removedDefaultChoreIds.includes(`${member.id}-${core.slug}`)) chores.push({ id: `${member.id}-${core.slug}`, title: core.title, detail: core.detail, icon: core.icon, points: core.points, routine: core.routine, memberId: member.id, cadence: "daily" });
   const completions = Array.from(new Map(saved.completions.map((item) => { const mapped = { ...item, choreId: replacedIds.get(item.choreId) || item.choreId }; return [mapped.id || `${mapped.choreId}-${mapped.date}`, mapped]; })).values());
-  return { ...saved, members, chores: chores.map((chore) => chore.memberIds?.length ? { ...chore, teamBonus: chore.teamBonus ?? 5 } : chore), completions, rewards: saved.rewards ?? starterRewards, redemptions: saved.redemptions ?? [], removedDefaultChoreIds, pointPolicy: saved.pointPolicy ?? { reset: "never", dailyEarnLimit: 0, maxBalance: 0 }, notificationSettings: saved.notificationSettings ?? { enabled: false, evening: true, rewards: true, calendar: true } };
+  const notificationSettings = Object.assign({ enabled: false, evening: true, rewards: true, calendar: true, quietStart: "20:00", quietEnd: "07:00", memberIds: members.map((member) => member.id) }, saved.notificationSettings ?? {}) as NotificationSettings;
+  const accessibilitySettings = Object.assign({ highContrast: false, largeText: false, reducedMotion: false, sounds: false, spokenChores: false }, saved.accessibilitySettings ?? {}) as AccessibilitySettings;
+  return { ...saved, members, chores: chores.map((chore) => chore.memberIds?.length ? { ...chore, teamBonus: chore.teamBonus ?? 5, teamMode: chore.teamMode ?? "one" } : chore), completions, rewards: saved.rewards ?? starterRewards, redemptions: saved.redemptions ?? [], adjustments: saved.adjustments ?? [], removedDefaultChoreIds, pointPolicy: saved.pointPolicy ?? { reset: "never", dailyEarnLimit: 0, maxBalance: 0 }, notificationSettings, accessibilitySettings };
 }
 
 const iso = (date = new Date()) => date.toISOString().slice(0, 10);
@@ -146,8 +152,11 @@ export function ChoreChart() {
   const [state, setState] = useState<AppState>(() => normalizeState(starterState));
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [activeMember, setActiveMember] = useState("all");
-  const [tab, setTab] = useState<"today" | "week" | "family">("today");
+  const [tab, setTab] = useState<"today" | "week" | "family" | "kids">("today");
   const [familyRange, setFamilyRange] = useState<"day" | "week">("day");
+  const [childHome, setChildHome] = useState("charli");
+  const [routineFocus, setRoutineFocus] = useState<Routine | "all">(() => { const hour = new Date().getHours(); return hour < 11 ? "morning" : hour < 16 ? "afternoon" : "evening"; });
+  const [activitySearch, setActivitySearch] = useState("");
   const [showAdd, setShowAdd] = useState(false);
   const [editingChore, setEditingChore] = useState<Chore | null>(null);
   const [showPeople, setShowPeople] = useState(false);
@@ -190,7 +199,7 @@ export function ChoreChart() {
 
   useEffect(() => {
     if (!state.notificationSettings.enabled || !state.notificationSettings.evening || typeof Notification === "undefined" || Notification.permission !== "granted") return;
-    const timer = window.setInterval(() => { const now = new Date(); if (now.getHours() === 19 && now.getMinutes() === 0) new Notification("Tidy Team evening check", { body: "Take a look at any chores still waiting for a high-five." }); }, 60_000);
+    const timer = window.setInterval(() => { const now = new Date(); const current = now.toTimeString().slice(0, 5); const { quietStart, quietEnd } = state.notificationSettings; const quiet = quietStart > quietEnd ? current >= quietStart || current < quietEnd : current >= quietStart && current < quietEnd; if (!quiet && now.getHours() === 19 && now.getMinutes() === 0) new Notification("Tidy Team evening check", { body: "Take a look at any chores still waiting for a high-five." }); }, 60_000);
     return () => window.clearInterval(timer);
   }, [state.notificationSettings]);
 
@@ -216,7 +225,8 @@ export function ChoreChart() {
   const visibleChores = state.chores.filter((chore) => {
     const memberMatches = activeMember === "all" || chore.memberId === activeMember || chore.memberIds?.includes(activeMember);
     const dateMatches = scheduledOn(chore, selectedDate);
-    return memberMatches && (tab === "week" || dateMatches);
+    const routineMatches = tab !== "today" || routineFocus === "all" || (chore.routine ?? "anytime") === routineFocus || chore.routine === "anytime";
+    return memberMatches && routineMatches && (tab === "week" || dateMatches);
   });
   const isComplete = (choreId: string, date = selectedIso) => state.completions.some((item) => item.choreId === choreId && item.date === date);
   const flexibleCount = (choreId: string) => { const dates = new Set(weekDates.map(iso)); return state.completions.filter((item) => item.choreId === choreId && dates.has(item.date)).length; };
@@ -229,6 +239,7 @@ export function ChoreChart() {
       : [...state.completions, { id: `${Date.now()}`, choreId, date, status: selectedChore?.verification && selectedChore.verification !== "none" ? "pending" as const : "approved" as const }];
     persist({ ...state, completions });
     if (!wasComplete && (!selectedChore?.verification || selectedChore.verification === "none")) {
+      if (state.accessibilitySettings.sounds) try { const AudioCtx = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext; if (AudioCtx) { const audio = new AudioCtx(); const oscillator = audio.createOscillator(); const gain = audio.createGain(); oscillator.frequency.setValueAtTime(660, audio.currentTime); oscillator.frequency.exponentialRampToValueAtTime(990, audio.currentTime + .18); gain.gain.setValueAtTime(.08, audio.currentTime); gain.gain.exponentialRampToValueAtTime(.001, audio.currentTime + .25); oscillator.connect(gain).connect(audio.destination); oscillator.start(); oscillator.stop(audio.currentTime + .25); } } catch { /* Audio feedback is optional. */ }
       const chore = state.chores.find((item) => item.id === choreId);
       const member = state.members.find((item) => item.id === chore?.memberId);
       if (chore?.memberIds?.length) {
@@ -239,6 +250,17 @@ export function ChoreChart() {
         window.setTimeout(() => setCelebration(null), 1500);
       }
     }
+  };
+  const confirmTeamPart = (chore: Chore, memberId: string, date = selectedIso) => {
+    const existing = state.completions.find((item) => item.choreId === chore.id && item.date === date);
+    const participants = new Set(existing?.participantIds ?? []);
+    if (participants.has(memberId)) participants.delete(memberId); else participants.add(memberId);
+    const participantIds = Array.from(participants);
+    const allJoined = (chore.memberIds ?? []).every((id) => participants.has(id));
+    const nextCompletion: Completion = { ...(existing ?? { id: `${Date.now()}`, choreId: chore.id, date }), participantIds, status: allJoined ? "approved" : "pending" };
+    const completions = participantIds.length === 0 ? state.completions.filter((item) => item !== existing) : existing ? state.completions.map((item) => item === existing ? nextCompletion : item) : [...state.completions, nextCompletion];
+    persist({ ...state, completions });
+    if (allJoined) { setCelebration({ emoji: "🤝", color: "#6957d5", name: "Tidy Team", message: "Everyone joined in—bonus unlocked for" }); window.setTimeout(() => setCelebration(null), 1800); }
   };
 
   const recordFlexible = (chore: Chore, date = selectedIso) => {
@@ -286,10 +308,19 @@ export function ChoreChart() {
     });
     const earned = Array.from(earnedByDay.values()).reduce((sum, amount) => sum + (state.pointPolicy.dailyEarnLimit > 0 ? Math.min(amount, state.pointPolicy.dailyEarnLimit) : amount), 0);
     const spent = state.redemptions.filter((item) => item.memberId === member.id && item.status !== "pending" && item.redeemedAt.slice(0, 10) >= pointPeriodStart).reduce((sum, item) => sum + item.cost, 0);
-    const available = Math.max(0, earned - spent);
-    return { ...member, earned, spent, points: state.pointPolicy.maxBalance > 0 ? Math.min(available, state.pointPolicy.maxBalance) : available };
+    const adjusted = state.adjustments.filter((item) => item.memberId === member.id && item.createdAt.slice(0, 10) >= pointPeriodStart).reduce((sum, item) => sum + item.amount, 0);
+    const available = Math.max(0, earned + adjusted - spent);
+    return { ...member, earned, adjusted, spent, points: state.pointPolicy.maxBalance > 0 ? Math.min(available, state.pointPolicy.maxBalance) : available };
   }).sort((a, b) => b.points - a.points);
   const rewardKid = pointsByMember.find((member) => member.id === rewardMember) ?? pointsByMember[0];
+  const activityLedger = [
+    ...state.completions.map((item) => { const chore = state.chores.find((entry) => entry.id === item.choreId); const members = state.members.filter((member) => chore && (chore.memberId === member.id || chore.memberIds?.includes(member.id))).map((member) => member.name).join(", "); return { id: `completion-${item.id || item.choreId + item.date}`, date: item.date, text: `${members || "Someone"} ${item.status === "pending" ? "submitted" : "completed"} ${chore?.title || "a chore"}`, kind: item.status === "pending" ? "⏳" : "✓" }; }),
+    ...state.redemptions.map((item) => ({ id: `redemption-${item.id}`, date: item.redeemedAt.slice(0, 10), text: `${state.members.find((member) => member.id === item.memberId)?.name || "A child"} ${item.status === "pending" ? "requested" : "redeemed"} ${item.rewardTitle} for ${item.cost} stars`, kind: item.status === "pending" ? "⏳" : "🎁" })),
+    ...state.adjustments.map((item) => ({ id: `adjustment-${item.id}`, date: item.createdAt.slice(0, 10), text: `${state.members.find((member) => member.id === item.memberId)?.name || "A child"}: ${item.amount > 0 ? "+" : ""}${item.amount} stars — ${item.note}`, kind: "⭐" })),
+  ].sort((a, b) => b.date.localeCompare(a.date));
+  const yesterday = addDays(new Date(), -1);
+  const missedYesterday = state.chores.filter((chore) => scheduledOn(chore, yesterday) && !isComplete(chore.id, iso(yesterday)));
+  const calendarSuggestions = Array.from(new Set(calendarEvents.flatMap((event) => event.type === "kids" ? ["Pack overnight bag"] : event.type === "work" ? ["Choose a quiet activity"] : [])));
 
   const addChore = (form: FormData) => {
     const title = String(form.get("title") || "").trim();
@@ -298,7 +329,7 @@ export function ChoreChart() {
     const assignee = String(form.get("memberId"));
     const base = {
       title, detail: String(form.get("detail") || "").trim() || "Custom family job",
-      icon: String(form.get("icon") || "✨"), points: Number(form.get("points")) || 5, teamBonus: assignee === "team" ? Math.max(0, Number(form.get("teamBonus")) || 0) : undefined, verification: String(form.get("verification") || "none") as Verification,
+      icon: String(form.get("icon") || "✨"), points: Number(form.get("points")) || 5, teamBonus: assignee === "team" ? Math.max(0, Number(form.get("teamBonus")) || 0) : undefined, teamMode: assignee === "team" ? String(form.get("teamMode") || "everyone") as "one" | "everyone" : undefined, roles: assignee === "team" ? Object.fromEntries(state.members.map((member) => [member.id, String(form.get(`role-${member.id}`) || "Help the team")])) : undefined, verification: String(form.get("verification") || "none") as Verification,
       cadence, routine: String(form.get("routine")) as Routine, ...(cadence === "weekly" ? { dueDay: Number(form.get("dueDay")) } : {}), ...(cadence === "monthly" ? { dueDate: Number(form.get("dueDate")) } : {}), ...(cadence === "flexible" ? { weeklyGoal: Math.max(1, Number(form.get("weeklyGoal")) || 1) } : {}),
     };
     const assignees = assignee === "all" ? state.members.map((member) => member.id) : assignee === "team" ? ["team"] : [assignee];
@@ -311,7 +342,7 @@ export function ChoreChart() {
     if (!editingChore) return;
     const cadence = String(form.get("cadence")) as Cadence;
     const assignee = String(form.get("memberId"));
-    const updated: Chore = { ...editingChore, title: String(form.get("title") || editingChore.title), detail: String(form.get("detail") || editingChore.detail), icon: String(form.get("icon")), points: Number(form.get("points")) || 1, teamBonus: assignee === "team" ? Math.max(0, Number(form.get("teamBonus")) || 0) : undefined, verification: String(form.get("verification") || "none") as Verification, memberId: assignee === "team" ? state.members[0].id : assignee, memberIds: assignee === "team" ? state.members.map((member) => member.id) : undefined, cadence, routine: String(form.get("routine")) as Routine, dueDay: cadence === "weekly" ? Number(form.get("dueDay")) : undefined, dueDate: cadence === "monthly" ? Number(form.get("dueDate")) : undefined, weeklyGoal: cadence === "flexible" ? Math.max(1, Number(form.get("weeklyGoal")) || 1) : undefined };
+    const updated: Chore = { ...editingChore, title: String(form.get("title") || editingChore.title), detail: String(form.get("detail") || editingChore.detail), icon: String(form.get("icon")), points: Number(form.get("points")) || 1, teamBonus: assignee === "team" ? Math.max(0, Number(form.get("teamBonus")) || 0) : undefined, teamMode: assignee === "team" ? String(form.get("teamMode") || "everyone") as "one" | "everyone" : undefined, roles: assignee === "team" ? Object.fromEntries(state.members.map((member) => [member.id, String(form.get(`role-${member.id}`) || editingChore.roles?.[member.id] || "Help the team")])) : undefined, verification: String(form.get("verification") || "none") as Verification, memberId: assignee === "team" ? state.members[0].id : assignee, memberIds: assignee === "team" ? state.members.map((member) => member.id) : undefined, cadence, routine: String(form.get("routine")) as Routine, dueDay: cadence === "weekly" ? Number(form.get("dueDay")) : undefined, dueDate: cadence === "monthly" ? Number(form.get("dueDate")) : undefined, weeklyGoal: cadence === "flexible" ? Math.max(1, Number(form.get("weeklyGoal")) || 1) : undefined };
     persist({ ...state, chores: state.chores.map((chore) => chore.id === updated.id ? updated : chore) });
     setEditingChore(null);
   };
@@ -325,14 +356,21 @@ export function ChoreChart() {
   const savePeople = (form: FormData) => {
     const members = state.members.map((member) => { const name = String(form.get(`${member.id}-name`) || member.name).trim(); return { ...member, name, initial: name.slice(0, 1).toUpperCase(), color: String(form.get(`${member.id}-color`) || member.color), celebrationEmoji: String(form.get(`${member.id}-emoji`) || member.celebrationEmoji), celebrationMessage: String(form.get(`${member.id}-message`) || member.celebrationMessage).trim() }; });
     const pointPolicy: PointPolicy = { reset: String(form.get("pointReset")) as PointPolicy["reset"], dailyEarnLimit: Math.max(0, Number(form.get("dailyEarnLimit")) || 0), maxBalance: Math.max(0, Number(form.get("maxBalance")) || 0) };
-    const notificationSettings: NotificationSettings = { enabled: form.get("notifications") === "on", evening: form.get("notifyEvening") === "on", rewards: form.get("notifyRewards") === "on", calendar: form.get("notifyCalendar") === "on" };
+    const notificationSettings: NotificationSettings = { enabled: form.get("notifications") === "on", evening: form.get("notifyEvening") === "on", rewards: form.get("notifyRewards") === "on", calendar: form.get("notifyCalendar") === "on", quietStart: String(form.get("quietStart") || "20:00"), quietEnd: String(form.get("quietEnd") || "07:00"), memberIds: state.members.filter((member) => form.get(`notify-${member.id}`) === "on").map((member) => member.id) };
+    const accessibilitySettings: AccessibilitySettings = { highContrast: form.get("highContrast") === "on", largeText: form.get("largeText") === "on", reducedMotion: form.get("reducedMotion") === "on", sounds: form.get("sounds") === "on", spokenChores: form.get("spokenChores") === "on" };
     if (notificationSettings.enabled && typeof Notification !== "undefined" && Notification.permission === "default") Notification.requestPermission();
-    persist({ ...state, members, pointPolicy, notificationSettings }); setShowPeople(false);
+    persist({ ...state, members, pointPolicy, notificationSettings, accessibilitySettings }); setShowPeople(false);
   };
 
   const addSuggestion = (suggestion: typeof suggestedChores[number]) => {
     const assignees = suggestionMember === "all" ? state.members.map((member) => member.id) : [suggestionMember];
     const chores: Chore[] = assignees.map((memberId, index) => ({ id: `${memberId}-${Date.now()}-${index}`, ...suggestion, routine: "anytime", memberId, ...(suggestion.cadence === "weekly" ? { dueDay: selectedDate.getDay() } : {}) }));
+    persist({ ...state, chores: [...state.chores, ...chores] });
+  };
+
+  const addCalendarSuggestion = (title: string) => {
+    const template = title === "Pack overnight bag" ? { icon: "🎒", detail: "Before the upcoming kid visit", points: 12 } : { icon: "🤫", detail: "During Dad’s work meeting", points: 8 };
+    const chores = state.members.map((member, index) => ({ id: `${member.id}-calendar-${Date.now()}-${index}`, title, ...template, memberId: member.id, cadence: "weekly" as Cadence, routine: "anytime" as Routine, dueDay: selectedDate.getDay() }));
     persist({ ...state, chores: [...state.chores, ...chores] });
   };
 
@@ -349,6 +387,16 @@ export function ChoreChart() {
     if (!member || member.points < redemption.cost) return;
     persist({ ...state, redemptions: state.redemptions.map((item) => item.id === redemption.id ? { ...item, status: "approved" } : item) });
   };
+
+  const adjustPoints = (memberId: string, amount: number) => {
+    const member = state.members.find((item) => item.id === memberId);
+    const note = window.prompt(`Why are you ${amount > 0 ? "adding" : "removing"} ${Math.abs(amount)} stars for ${member?.name}?`, amount > 0 ? "Parent bonus" : "Correction");
+    if (note === null) return;
+    persist({ ...state, adjustments: [...state.adjustments, { id: `${Date.now()}`, memberId, amount, note: note.trim() || "Parent adjustment", createdAt: new Date().toISOString() }] });
+  };
+
+  const setRewardGoal = (memberId: string, rewardGoalId: string) => persist({ ...state, members: state.members.map((member) => member.id === memberId ? { ...member, rewardGoalId } : member) });
+  const speakChore = (chore: Chore) => { if (typeof speechSynthesis === "undefined") return; speechSynthesis.cancel(); speechSynthesis.speak(new SpeechSynthesisUtterance(`${chore.title}. ${chore.detail}`)); };
 
   const unlockParent = async (form: FormData) => {
     setPinError("");
@@ -390,7 +438,7 @@ export function ChoreChart() {
     setShowRewardEditor(false);
   };
 
-  return <main className="shell">
+  return <main className={`shell ${state.accessibilitySettings.highContrast ? "highContrast" : ""} ${state.accessibilitySettings.largeText ? "largeText" : ""} ${state.accessibilitySettings.reducedMotion ? "reduceMotion" : ""}`}>
     <header className="topbar">
       <a className="brand" href="#top"><span className="brandMark">✓</span><span>Tidy Team</span></a>
       <div className="headerActions"><button className={`parentButton ${isParent ? "unlocked" : ""}`} onClick={() => isParent ? setShowParentDashboard(true) : setShowPin(true)}>{isParent ? "⚙️ Parent dashboard" : "🔒 Parent"}</button><button className="household" onClick={() => isParent ? setShowPeople(true) : setShowPin(true)} aria-label="Edit household members"><span className="avatarStack">{state.members.map((m) => <i key={m.id} style={{ background: m.color }}>{m.initial}</i>)}</span><span><strong>{state.household}</strong><small>{syncLabel} · {isParent ? "Edit" : "Locked"}</small></span></button></div>
@@ -409,6 +457,7 @@ export function ChoreChart() {
       <div className="calendarTitle"><div><p className="eyebrow">Family schedule</p><h2 id="calendar-heading">What’s happening this week?</h2></div><div className="calendarLegend"><span><i className="kidsDot" />Kid visits</span><span><i className="workDot" />Work</span><span><i className="familyDot" />Family</span></div></div>
       {calendarEvents.length > 0 ? <div className="eventRail">{calendarEvents.map((event) => { const start = new Date(event.start); const end = new Date(event.end); return <article className="eventCard" key={event.id} style={{ "--event-color": event.color } as React.CSSProperties}><div className="eventDate"><strong>{dayNames[start.getDay()]}</strong><span>{start.getDate()}</span></div><div><small>{event.calendar}</small><h3>{event.title}</h3><p>{event.allDay ? "All day" : `${start.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}–${end.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`}{event.location ? ` · ${event.location}` : ""}</p></div></article>; })}</div>
       : <div className="calendarEmpty"><span>🗓️</span><div><strong>{calendarConfigured === false ? "Your calendars are ready to connect" : "No events this week"}</strong><p>{calendarConfigured === false ? "Add your private Google, iCloud, or Outlook calendar feed during deployment." : "Looks like a wide-open week!"}</p></div></div>}
+      {isParent && calendarSuggestions.length > 0 && <div className="calendarSuggestions"><strong>Suggested from your calendar</strong>{calendarSuggestions.map((suggestion) => <button key={suggestion} onClick={() => addCalendarSuggestion(suggestion)}>＋ {suggestion}</button>)}</div>}
     </section>
 
     <section className="rewardsShop" aria-labelledby="rewards-heading">
@@ -420,18 +469,19 @@ export function ChoreChart() {
 
     <section className="dashboard" aria-label="Chore chart">
       <div className="controls">
-        <div className="tabs"><button className={tab === "today" ? "active" : ""} onClick={() => setTab("today")}>My day</button><button className={tab === "week" ? "active" : ""} onClick={() => setTab("week")}>Our week</button><button className={tab === "family" ? "active" : ""} onClick={() => setTab("family")}>Kids side by side</button></div>
-        {tab !== "family" ? <div className="memberFilters"><button className={activeMember === "all" ? "active" : ""} onClick={() => setActiveMember("all")}>Everyone</button>{state.members.map((m) => <button key={m.id} className={activeMember === m.id ? "active" : ""} onClick={() => setActiveMember(m.id)}><span style={{ background: m.color }}>{m.initial}</span>{m.name}</button>)}</div> : <div className="familyRange" aria-label="Family board range"><button className={familyRange === "day" ? "active" : ""} onClick={() => setFamilyRange("day")}>Day</button><button className={familyRange === "week" ? "active" : ""} onClick={() => setFamilyRange("week")}>Week</button></div>}
+        <div className="tabs"><button className={tab === "today" ? "active" : ""} onClick={() => setTab("today")}>My day</button><button className={tab === "kids" ? "active" : ""} onClick={() => setTab("kids")}>Kid home</button><button className={tab === "week" ? "active" : ""} onClick={() => setTab("week")}>Our week</button><button className={tab === "family" ? "active" : ""} onClick={() => setTab("family")}>Kids side by side</button></div>
+        {tab === "family" ? <div className="familyRange" aria-label="Family board range"><button className={familyRange === "day" ? "active" : ""} onClick={() => setFamilyRange("day")}>Day</button><button className={familyRange === "week" ? "active" : ""} onClick={() => setFamilyRange("week")}>Week</button></div> : tab === "kids" ? <div className="memberFilters childChooser">{state.members.map((m) => <button key={m.id} className={childHome === m.id ? "active" : ""} onClick={() => setChildHome(m.id)}><span style={{ background: m.color }}>{m.initial}</span>{m.name}</button>)}</div> : <div className="memberFilters"><button className={activeMember === "all" ? "active" : ""} onClick={() => setActiveMember("all")}>Everyone</button>{state.members.map((m) => <button key={m.id} className={activeMember === m.id ? "active" : ""} onClick={() => setActiveMember(m.id)}><span style={{ background: m.color }}>{m.initial}</span>{m.name}</button>)}</div>}
         {isParent && <><button className="ideaButton" onClick={() => setShowSuggestions(true)}>💡 Chore ideas</button><button className="addButton" onClick={() => setShowAdd(true)}>＋ Add a job</button></>}
       </div>
+      {tab === "today" && <div className="routineFocus" aria-label="Routine"><button className={routineFocus === "all" ? "active" : ""} onClick={() => setRoutineFocus("all")}>All day</button><button className={routineFocus === "morning" ? "active" : ""} onClick={() => setRoutineFocus("morning")}>☀️ Morning</button><button className={routineFocus === "afternoon" ? "active" : ""} onClick={() => setRoutineFocus("afternoon")}>🎒 After school</button><button className={routineFocus === "evening" ? "active" : ""} onClick={() => setRoutineFocus("evening")}>🌙 Bedtime</button></div>}
       <div className="weekStrip">{weekDates.map((date) => <button key={iso(date)} className={iso(date) === selectedIso ? "active" : ""} onClick={() => setSelectedDate(date)}><span>{dayNames[date.getDay()]}</span><strong>{date.getDate()}</strong>{iso(date) === iso() && <i>Today</i>}</button>)}</div>
 
       {tab === "today" ? <div className="choreGrid">{visibleChores.map((chore) => {
         const member = state.members.find((entry) => entry.id === chore.memberId)!; const count = chore.cadence === "flexible" ? flexibleCount(chore.id) : 0; const done = chore.cadence === "flexible" ? count >= (chore.weeklyGoal ?? 1) : isComplete(chore.id);
         const collaborators = chore.memberIds?.map((id) => state.members.find((entry) => entry.id === id)).filter(Boolean) as Member[] | undefined;
         return <article className={`choreCard ${done ? "done" : ""} ${collaborators?.length ? "teamChore" : ""}`} key={chore.id} style={{ "--member-color": collaborators?.length ? "#6957d5" : member.color } as React.CSSProperties}>
-          <button className="check" onClick={() => chore.cadence === "flexible" ? recordFlexible(chore) : toggle(chore.id)} disabled={chore.cadence === "flexible" && done} aria-label={chore.cadence === "flexible" ? `Record ${chore.title}` : `${done ? "Mark incomplete" : "Complete"} ${chore.title}`}>{done ? "✓" : chore.cadence === "flexible" ? "+" : ""}</button>{isParent && <button className="editChore" onClick={() => setEditingChore(chore)} aria-label={`Edit ${chore.title}`}>✎</button>}
-          <div className="choreIcon">{chore.icon}</div><div className="choreCopy"><h2>{chore.title}</h2><p>{chore.detail}</p><span className="repeatBadge">↻ {repeatLabel(chore)}</span><span className="routineBadge">{routineLabel(chore.routine)}</span>{chore.verification && chore.verification !== "none" && <span className="verifyBadge">{chore.verification === "photo" ? "📷 Photo proof" : chore.verification === "sibling" ? "🤝 Sibling check" : "🔐 Parent approval"}</span>}</div>
+          <button className="check" onClick={() => chore.cadence === "flexible" ? recordFlexible(chore) : toggle(chore.id)} disabled={(chore.cadence === "flexible" && done) || (Boolean(collaborators?.length) && chore.teamMode === "everyone")} aria-label={collaborators?.length && chore.teamMode === "everyone" ? `Use each child button for ${chore.title}` : chore.cadence === "flexible" ? `Record ${chore.title}` : `${done ? "Mark incomplete" : "Complete"} ${chore.title}`}>{done ? "✓" : chore.cadence === "flexible" ? "+" : collaborators?.length && chore.teamMode === "everyone" ? (state.completions.find((item) => item.choreId === chore.id && item.date === selectedIso)?.participantIds?.length ?? 0) : ""}</button>{isParent && <button className="editChore" onClick={() => setEditingChore(chore)} aria-label={`Edit ${chore.title}`}>✎</button>}
+          <div className="choreIcon">{chore.icon}</div><div className="choreCopy"><h2>{chore.title}</h2><p>{chore.detail}</p><span className="repeatBadge">↻ {repeatLabel(chore)}</span><span className="routineBadge">{routineLabel(chore.routine)}</span>{chore.verification && chore.verification !== "none" && <span className="verifyBadge">{chore.verification === "photo" ? "📷 Photo proof" : chore.verification === "sibling" ? "🤝 Sibling check" : "🔐 Parent approval"}</span>}{collaborators?.length && chore.teamMode === "everyone" && <div className="teamConfirmations">{collaborators.map((person) => { const joined = state.completions.find((item) => item.choreId === chore.id && item.date === selectedIso)?.participantIds?.includes(person.id); return <button key={person.id} className={joined ? "joined" : ""} onClick={() => confirmTeamPart(chore, person.id)}><i style={{ background: person.color }}>{person.initial}</i>{joined ? "Ready" : chore.roles?.[person.id] || "My part"}</button>; })}</div>}</div>
           <div className="cardMeta">{collaborators?.length ? <span className="assigned teamAssigned"><span className="miniStack">{collaborators.map((person) => <i key={person.id} style={{ background: person.color }}>{person.initial}</i>)}</span>Team chore</span> : <span className="assigned" style={{ color: member.color }}><i style={{ background: member.color }}>{member.initial}</i>{member.name}</span>}<strong>{chore.cadence === "flexible" ? `${count}/${chore.weeklyGoal ?? 1} this week · ` : ""}⭐ +{chore.points + (collaborators?.length ? chore.teamBonus ?? 5 : 0)}{collaborators?.length ? ` each (${chore.teamBonus ?? 5} bonus)` : ""}</strong>{chore.cadence === "flexible" && count > 0 && isParent && <button className="undoCount" onClick={() => undoFlexible(chore.id)}>Undo last</button>}</div>
         </article>;
       })}{visibleChores.length === 0 && <div className="empty"><span>☀️</span><h2>All clear</h2><p>No chores are scheduled for this view.</p></div>}</div>
@@ -442,16 +492,22 @@ export function ChoreChart() {
           return <button key={iso(date)} disabled={!allowed || (chore.cadence === "flexible" && done)} className={done ? "complete" : ""} onClick={() => chore.cadence === "flexible" ? recordFlexible(chore, iso(date)) : toggle(chore.id, iso(date))} aria-label={`${chore.title}, ${dayNames[date.getDay()]}`}>{allowed ? (chore.cadence === "flexible" ? (dayCount ? `+${dayCount}` : "+") : done ? "✓" : "○") : "—"}</button>;
         })}</div>;
       })}</div>
-      : <div className="familyBoard" aria-label={`${familyRange === "day" ? "Daily" : "Weekly"} chores by child`}>
+      : tab === "family" ? <div className="familyBoard" aria-label={`${familyRange === "day" ? "Daily" : "Weekly"} chores by child`}>
         {state.members.map((member) => { const memberChores = state.chores.filter((chore) => (chore.memberId === member.id || chore.memberIds?.includes(member.id)) && (familyRange === "week" || scheduledOn(chore, selectedDate))); const completed = memberChores.filter((chore) => familyRange === "day" ? isComplete(chore.id) : weekDates.some((date) => isComplete(chore.id, iso(date)))).length; return <section className="familyColumn" key={member.id} style={{ "--member-color": member.color } as React.CSSProperties}>
           <header><span style={{ background: member.color }}>{member.initial}</span><div><h2>{member.name}</h2><small>{completed} of {memberChores.length} started</small></div><strong>⭐ {pointsByMember.find((entry) => entry.id === member.id)?.points ?? 0}</strong></header>
           <div className="familyProgress"><i style={{ width: `${memberChores.length ? Math.round((completed / memberChores.length) * 100) : 0}%`, background: member.color }} /></div>
           <div className="familyChores">{memberChores.map((chore) => { const team = Boolean(chore.memberIds?.length); const doneToday = isComplete(chore.id); return <article className={`${doneToday ? "done" : ""} ${team ? "team" : ""}`} key={chore.id}>
-            <div className="familyChoreTitle"><span>{chore.icon}</span><div><strong>{chore.title}</strong><small>{team ? `Team · +${chore.points + (chore.teamBonus ?? 5)} each` : `+${chore.points} stars`}</small></div>{familyRange === "day" && <button className="familyCheck" onClick={() => chore.cadence === "flexible" ? recordFlexible(chore) : toggle(chore.id)} aria-label={`${doneToday ? "Mark incomplete" : "Complete"} ${chore.title} for ${member.name}`}>{doneToday ? "✓" : ""}</button>}</div>
+            <div className="familyChoreTitle"><span>{chore.icon}</span><div><strong>{chore.title}</strong><small>{team ? `${chore.roles?.[member.id] || "Team part"} · +${chore.points + (chore.teamBonus ?? 5)} each` : `+${chore.points} stars`}</small></div>{familyRange === "day" && <button className="familyCheck" onClick={() => team && chore.teamMode === "everyone" ? confirmTeamPart(chore, member.id) : chore.cadence === "flexible" ? recordFlexible(chore) : toggle(chore.id)} aria-label={`${doneToday ? "Mark incomplete" : "Complete"} ${chore.title} for ${member.name}`}>{team && chore.teamMode === "everyone" ? state.completions.find((item) => item.choreId === chore.id && item.date === selectedIso)?.participantIds?.includes(member.id) ? "✓" : "" : doneToday ? "✓" : ""}</button>}</div>
             {familyRange === "week" && <div className="familyWeek">{weekDates.map((date) => { const allowed = scheduledOn(chore, date); const done = isComplete(chore.id, iso(date)); return <button key={iso(date)} disabled={!allowed} className={done ? "done" : ""} onClick={() => chore.cadence === "flexible" ? recordFlexible(chore, iso(date)) : toggle(chore.id, iso(date))} aria-label={`${chore.title} for ${member.name}, ${dayNames[date.getDay()]}`}><span>{dayNames[date.getDay()].slice(0, 1)}</span><b>{done ? "✓" : allowed ? "○" : "—"}</b></button>; })}</div>}
           </article>; })}{memberChores.length === 0 && <p className="familyEmpty">Nothing scheduled—enjoy the break! ☀️</p>}</div>
         </section>; })}
-      </div>}
+      </div>
+      : (() => { const member = state.members.find((item) => item.id === childHome) ?? state.members[0]; const pointInfo = pointsByMember.find((item) => item.id === member.id); const chores = state.chores.filter((chore) => (chore.memberId === member.id || chore.memberIds?.includes(member.id)) && scheduledOn(chore, selectedDate)); const completed = chores.filter((chore) => isComplete(chore.id)).length; const goal = state.rewards.find((reward) => reward.id === member.rewardGoalId) ?? state.rewards[0]; const streak = Array.from({ length: 30 }, (_, index) => iso(addDays(new Date(), -index))).findIndex((date) => !state.completions.some((completion) => completion.date === date && state.chores.some((chore) => chore.id === completion.choreId && (chore.memberId === member.id || chore.memberIds?.includes(member.id))))); const streakCount = streak === -1 ? 30 : streak; return <section className="kidHome" style={{ "--kid-color": member.color } as React.CSSProperties}>
+        <header><div className="kidIdentity"><span style={{ background: member.color }}>{member.initial}</span><div><p className="eyebrow">{routineFocus === "morning" ? "Good morning" : routineFocus === "evening" ? "Good evening" : "Your adventure"}</p><h2>{member.name}&apos;s day</h2></div></div><div className="kidStats"><strong>⭐ {pointInfo?.points ?? 0}</strong><strong>🔥 {streakCount} day streak</strong><strong>{member.celebrationEmoji} {member.celebrationMessage}</strong></div></header>
+        <div className="kidGoal"><span>{goal?.emoji ?? "🎁"}</span><div><small>Saving for</small><strong>{goal?.title ?? "Choose a reward"}</strong><div><i style={{ width: `${goal ? Math.min(100, Math.round(((pointInfo?.points ?? 0) / goal.cost) * 100)) : 0}%` }} /></div><p>{pointInfo?.points ?? 0} of {goal?.cost ?? 0} stars</p></div><select aria-label="Choose reward goal" value={goal?.id ?? ""} onChange={(event) => setRewardGoal(member.id, event.target.value)}>{state.rewards.map((reward) => <option key={reward.id} value={reward.id}>{reward.emoji} {reward.title}</option>)}</select></div>
+        <div className="kidChores">{chores.map((chore) => { const done = isComplete(chore.id); const teamPartDone = state.completions.find((item) => item.choreId === chore.id && item.date === selectedIso)?.participantIds?.includes(member.id); return <article className={done ? "done" : ""} key={chore.id}><button className="kidDone" onClick={() => chore.memberIds?.length && chore.teamMode === "everyone" ? confirmTeamPart(chore, member.id) : chore.cadence === "flexible" ? recordFlexible(chore) : toggle(chore.id)} aria-label={`${done ? "Undo" : "Complete"} ${chore.title}`}>{chore.memberIds?.length && chore.teamMode === "everyone" ? teamPartDone ? "✓" : "My part!" : done ? "✓" : "I’m done!"}</button><span>{chore.icon}</span><div><h3>{chore.title}</h3><p>{chore.memberIds?.length ? `${chore.roles?.[member.id] || chore.detail} · Team bonus` : chore.detail} · ⭐ +{chore.points + (chore.memberIds?.length ? chore.teamBonus ?? 5 : 0)}</p></div>{state.accessibilitySettings.spokenChores && <button className="speakChore" onClick={() => speakChore(chore)} aria-label={`Read ${chore.title} aloud`}>🔊</button>}</article>; })}{chores.length === 0 && <div className="empty"><span>🌈</span><h2>All clear!</h2><p>Nothing is scheduled right now.</p></div>}</div>
+        <div className="kidProgress"><strong>{completed}/{chores.length}</strong><span>jobs finished today</span><div><i style={{ width: `${chores.length ? Math.round((completed / chores.length) * 100) : 0}%` }} /></div></div>
+      </section>; })()}
     </section>
     <footer><span>👆 Tap the big circle when your job is finished.</span><span>Kind helpers make happy homes! ⭐</span></footer>
 
@@ -462,6 +518,7 @@ export function ChoreChart() {
       <div className="formRow"><label>Icon<select name="icon" defaultValue="✨"><option>✨</option><option>🪥</option><option>🛏️</option><option>🧹</option><option>🧸</option><option>🛁</option><option>💜</option><option>💙</option><option>🛠️</option><option>🧺</option><option>🪴</option><option>🐾</option><option>♻️</option></select></label><label>Points<input name="points" type="number" min="1" max="100" defaultValue="10" /></label></div>
       <div className="formRow"><label>Assigned to<select name="memberId"><option value="all">Everyone — separately</option><option value="team">🤝 Team chore — together</option>{state.members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select></label><label>Routine<select name="routine" defaultValue="anytime"><option value="morning">Morning</option><option value="afternoon">After school</option><option value="evening">Evening</option><option value="anytime">Anytime</option></select></label></div>
       <label>Teamwork bonus per child<input name="teamBonus" type="number" min="0" max="100" defaultValue="5" /></label><p className="fieldHint">Used only for a team chore. Every child earns the regular points plus this bonus.</p>
+      <label>Team completion<select name="teamMode" defaultValue="everyone"><option value="everyone">Everyone confirms their part</option><option value="one">One completion finishes it for everyone</option></select></label><div className="teamRoles">{state.members.map((member) => <label key={member.id}>{member.name}&apos;s role<input name={`role-${member.id}`} placeholder="e.g. Gather the toys" /></label>)}</div>
       <label>Completion check<select name="verification" defaultValue="none"><option value="none">No approval needed</option><option value="parent">Ask a parent</option><option value="photo">Photo proof + parent approval</option><option value="sibling">Sibling confirmation</option></select></label>
       <label>Repeats<select name="cadence"><option value="daily">Every day</option><option value="weekly">Every week</option><option value="monthly">Every month</option><option value="flexible">Any day — multiple times per week</option></select></label>
       <div className="formRow"><label>Weekly day<select name="dueDay" defaultValue={selectedDate.getDay()}>{dayNames.map((day, index) => <option key={day} value={index}>{day}</option>)}</select></label><label>Monthly date<input name="dueDate" type="number" min="1" max="31" defaultValue={selectedDate.getDate()} /></label></div>
@@ -476,6 +533,7 @@ export function ChoreChart() {
       <div className="formRow"><label>Icon<select name="icon" defaultValue={editingChore.icon}><option>✨</option><option>🪥</option><option>🛏️</option><option>🧹</option><option>🧸</option><option>🛁</option><option>💜</option><option>💙</option><option>🛠️</option><option>🧺</option><option>🪴</option><option>🐾</option><option>♻️</option><option>🍽️</option></select></label><label>Points<input name="points" type="number" min="1" max="100" defaultValue={editingChore.points} /></label></div>
       <div className="formRow"><label>Assigned to<select name="memberId" defaultValue={editingChore.memberIds?.length ? "team" : editingChore.memberId}><option value="team">🤝 Team chore — together</option>{state.members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select></label><label>Routine<select name="routine" defaultValue={editingChore.routine ?? "anytime"}><option value="morning">Morning</option><option value="afternoon">After school</option><option value="evening">Evening</option><option value="anytime">Anytime</option></select></label></div>
       <label>Teamwork bonus per child<input name="teamBonus" type="number" min="0" max="100" defaultValue={editingChore.teamBonus ?? 5} /></label><p className="fieldHint">Used only for a team chore. Every child earns the regular points plus this bonus.</p>
+      <label>Team completion<select name="teamMode" defaultValue={editingChore.teamMode ?? "everyone"}><option value="everyone">Everyone confirms their part</option><option value="one">One completion finishes it for everyone</option></select></label><div className="teamRoles">{state.members.map((member) => <label key={member.id}>{member.name}&apos;s role<input name={`role-${member.id}`} defaultValue={editingChore.roles?.[member.id] ?? ""} placeholder="e.g. Gather the toys" /></label>)}</div>
       <label>Completion check<select name="verification" defaultValue={editingChore.verification ?? "none"}><option value="none">No approval needed</option><option value="parent">Ask a parent</option><option value="photo">Photo proof + parent approval</option><option value="sibling">Sibling confirmation</option></select></label>
       <label>Repeats<select name="cadence" defaultValue={editingChore.cadence}><option value="daily">Every day</option><option value="weekly">Every week</option><option value="monthly">Every month</option><option value="flexible">Any day — multiple times per week</option></select></label>
       <div className="formRow"><label>Weekly day<select name="dueDay" defaultValue={editingChore.dueDay ?? selectedDate.getDay()}>{dayNames.map((day, index) => <option key={day} value={index}>{day}</option>)}</select></label><label>Monthly date<input name="dueDate" type="number" min="1" max="31" defaultValue={editingChore.dueDate ?? selectedDate.getDate()} /></label></div>
@@ -488,15 +546,18 @@ export function ChoreChart() {
       <p className="modalIntro">Everyone can choose any celebration they like. Pick an emoji and personalize the cheer.</p>
       {state.members.map((member) => <fieldset className="personEditor" key={member.id}><legend><span style={{ background: member.color }}>{member.initial}</span>{member.name}</legend><label>Name<input name={`${member.id}-name`} defaultValue={member.name} required /></label><ThemeColorPicker member={member} /><div className="formRow"><label>Reaction<select name={`${member.id}-emoji`} defaultValue={member.celebrationEmoji}>{celebrationChoices.map((choice) => <option key={choice.emoji} value={choice.emoji}>{choice.emoji} {choice.name}</option>)}</select></label><label>Cheer<input name={`${member.id}-message`} defaultValue={member.celebrationMessage} maxLength={40} /></label></div></fieldset>)}
       <fieldset className="personEditor pointRules"><legend>⭐ Point rules</legend><label>Reset points<select name="pointReset" defaultValue={state.pointPolicy.reset}><option value="never">Never — keep rolling over</option><option value="weekly">At the start of each week</option><option value="monthly">At the start of each month</option></select></label><div className="formRow"><label>Daily earning limit<input name="dailyEarnLimit" type="number" min="0" max="10000" defaultValue={state.pointPolicy.dailyEarnLimit} /></label><label>Maximum saved balance<input name="maxBalance" type="number" min="0" max="100000" defaultValue={state.pointPolicy.maxBalance} /></label></div><p className="fieldHint">Use 0 for no limit. These rules apply equally to every child.</p></fieldset>
-      <fieldset className="personEditor pointRules"><legend>🔔 Notifications</legend><label className="toggleField"><input name="notifications" type="checkbox" defaultChecked={state.notificationSettings.enabled} /> Allow notifications on this device</label><div className="notificationChoices"><label><input name="notifyEvening" type="checkbox" defaultChecked={state.notificationSettings.evening} /> Evening chores</label><label><input name="notifyRewards" type="checkbox" defaultChecked={state.notificationSettings.rewards} /> Reward requests</label><label><input name="notifyCalendar" type="checkbox" defaultChecked={state.notificationSettings.calendar} /> Calendar reminders</label></div><p className="fieldHint">Notifications can be turned off here at any time. The browser may also ask for permission.</p></fieldset>
+      <fieldset className="personEditor pointRules"><legend>🔔 Notifications</legend><label className="toggleField"><input name="notifications" type="checkbox" defaultChecked={state.notificationSettings.enabled} /> Allow notifications on this device</label><div className="notificationChoices"><label><input name="notifyEvening" type="checkbox" defaultChecked={state.notificationSettings.evening} /> Evening chores</label><label><input name="notifyRewards" type="checkbox" defaultChecked={state.notificationSettings.rewards} /> Reward requests</label><label><input name="notifyCalendar" type="checkbox" defaultChecked={state.notificationSettings.calendar} /> Calendar reminders</label></div><div className="formRow"><label>Quiet time starts<input name="quietStart" type="time" defaultValue={state.notificationSettings.quietStart} /></label><label>Quiet time ends<input name="quietEnd" type="time" defaultValue={state.notificationSettings.quietEnd} /></label></div><div className="notificationChoices">{state.members.map((member) => <label key={member.id}><input name={`notify-${member.id}`} type="checkbox" defaultChecked={state.notificationSettings.memberIds.includes(member.id)} /> {member.name}</label>)}</div><p className="fieldHint">Notifications can be turned off here at any time. Quiet hours suppress family reminders.</p></fieldset>
+      <fieldset className="personEditor pointRules"><legend>♿ Accessibility & feedback</legend><div className="accessibilityChoices"><label><input name="largeText" type="checkbox" defaultChecked={state.accessibilitySettings.largeText} /> Larger text</label><label><input name="highContrast" type="checkbox" defaultChecked={state.accessibilitySettings.highContrast} /> High contrast</label><label><input name="reducedMotion" type="checkbox" defaultChecked={state.accessibilitySettings.reducedMotion} /> Reduce motion</label><label><input name="spokenChores" type="checkbox" defaultChecked={state.accessibilitySettings.spokenChores} /> Read chores aloud</label><label><input name="sounds" type="checkbox" defaultChecked={state.accessibilitySettings.sounds} /> Completion sounds</label></div></fieldset>
       <button className="saveButton" type="submit">Save team</button>
     </form></div>}
 
     {showParentDashboard && isParent && <div className="modalBackdrop" onMouseDown={(event) => event.target === event.currentTarget && setShowParentDashboard(false)}><section className="modal parentDashboard" role="dialog" aria-modal="true" aria-labelledby="parent-dashboard-title">
       <button type="button" className="close" onClick={() => setShowParentDashboard(false)} aria-label="Close">×</button><p className="eyebrow">Grown-ups only</p><h2 id="parent-dashboard-title">Parent dashboard</h2>
       <div className="parentOverview"><article><span>✓</span><strong>{weekStats.completed}/{weekStats.possible}</strong><small>chores this week</small></article><article><span>⏳</span><strong>{state.redemptions.filter((item) => item.status === "pending").length}</strong><small>reward requests</small></article><article><span>🗓️</span><strong>{calendarConfigured ? calendarEvents.length : "—"}</strong><small>{calendarConfigured ? "events this week" : "calendar not connected"}</small></article></div>
-      <div className="parentBalances">{pointsByMember.map((member) => <article key={member.id}><span style={{ background: member.color }}>{member.initial}</span><div><strong>{member.name}</strong><small>Earned {member.earned} · Spent {member.spent}</small></div><b>⭐ {member.points}</b></article>)}</div>
+      <div className="parentBalances">{pointsByMember.map((member) => <article key={member.id}><span style={{ background: member.color }}>{member.initial}</span><div><strong>{member.name}</strong><small>Earned {member.earned} · Adjusted {member.adjusted >= 0 ? "+" : ""}{member.adjusted} · Spent {member.spent}</small></div><b>⭐ {member.points}</b><div className="quickPoints"><button onClick={() => adjustPoints(member.id, 5)}>+5</button><button onClick={() => adjustPoints(member.id, -5)}>−5</button></div></article>)}</div>
       {state.completions.some((item) => item.status === "pending") && <div className="approvalQueue"><strong>Chores waiting for approval</strong>{state.completions.filter((item) => item.status === "pending").map((item) => { const chore = state.chores.find((entry) => entry.id === item.choreId); return <article key={item.id || `${item.choreId}-${item.date}`}><span>{item.proofPath ? "📷" : "⏳"} {chore?.title || "Chore"} · {item.date}</span><span><button onClick={() => approveCompletion(item)}>Approve points</button><button onClick={() => persist({ ...state, completions: state.completions.filter((entry) => entry !== item) })}>Decline</button></span></article>; })}</div>}
+      <details className="missedReview"><summary>Missed yesterday · {missedYesterday.length}</summary>{missedYesterday.slice(0, 20).map((chore) => <p key={chore.id}><span>{chore.icon} {chore.title}</span><small>{state.members.find((member) => member.id === chore.memberId)?.name}</small></p>)}</details>
+      <section className="activityLedger"><div><strong>Family activity</strong><input aria-label="Search activity" placeholder="Search chores, rewards, or names" value={activitySearch} onChange={(event) => setActivitySearch(event.target.value)} /></div>{activityLedger.filter((item) => item.text.toLowerCase().includes(activitySearch.toLowerCase())).slice(0, 30).map((item) => <p key={item.id}><span>{item.kind}</span><span>{item.text}</span><time>{item.date}</time></p>)}</section>
       <div className="dashboardRules"><strong>Point rules</strong><span>{state.pointPolicy.reset === "never" ? "No automatic reset" : `Reset ${state.pointPolicy.reset}`}</span><span>{state.pointPolicy.dailyEarnLimit > 0 ? `${state.pointPolicy.dailyEarnLimit} points/day maximum` : "No daily limit"}</span><span>{state.pointPolicy.maxBalance > 0 ? `${state.pointPolicy.maxBalance} maximum balance` : "No balance limit"}</span></div>
       <div className="parentActions"><button onClick={() => { setShowParentDashboard(false); setShowPeople(true); }}>👨‍👩‍👧 Edit family, reactions & points</button><button onClick={() => { setShowParentDashboard(false); setShowAdd(true); }}>＋ Add a chore</button><button onClick={() => { setShowParentDashboard(false); setShowSuggestions(true); }}>💡 Browse chore ideas</button><button onClick={() => { setShowParentDashboard(false); setShowRewardEditor(true); }}>🎁 Manage rewards</button></div>
       <p className="calendarAdminStatus"><strong>Calendar:</strong> {calendarConfigured ? `${calendarEvents.length} events loaded for this week.` : "Ready for private Google, iCloud, or Outlook feed links."}</p>
