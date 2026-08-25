@@ -13,7 +13,12 @@ type AppState = { household: string; members: Member[]; chores: Chore[]; complet
 type CalendarEvent = { id: string; title: string; start: string; end: string; allDay: boolean; location: string; calendar: string; type: "kids" | "work" | "family"; color: string };
 
 const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const celebrationChoices = ["🦄", "✨", "🌈", "🧚", "🏎️", "🚀", "🦖", "⚽", "🐉", "🎉", "🏆", "⭐"];
+const celebrationChoices = [
+  { emoji: "🦄", name: "Unicorn" }, { emoji: "✨", name: "Sparkles" }, { emoji: "🌈", name: "Rainbow" },
+  { emoji: "🧚", name: "Fairy" }, { emoji: "🏎️", name: "Race car" }, { emoji: "🚀", name: "Rocket" },
+  { emoji: "🦖", name: "Dinosaur" }, { emoji: "⚽", name: "Soccer ball" }, { emoji: "🐉", name: "Dragon" },
+  { emoji: "🎉", name: "Party popper" }, { emoji: "🏆", name: "Trophy" }, { emoji: "⭐", name: "Superstar" },
+];
 const starterRewards: Reward[] = [
   { id: "tablet-30", title: "30 minutes of tablet time", detail: "Choose a favorite app or show", emoji: "📱", cost: 40 },
   { id: "games-30", title: "30 minutes of video games", detail: "Bonus game time", emoji: "🎮", cost: 50 },
@@ -339,7 +344,7 @@ export function ChoreChart() {
     {showPeople && <div className="modalBackdrop" onMouseDown={(event) => event.target === event.currentTarget && setShowPeople(false)}><form className="modal" action={savePeople}>
       <button type="button" className="close" onClick={() => setShowPeople(false)} aria-label="Close">×</button><p className="eyebrow">Your household</p><h2>Edit the team</h2>
       <p className="modalIntro">Everyone can choose any celebration they like. Pick an emoji and personalize the cheer.</p>
-      {state.members.map((member) => <fieldset className="personEditor" key={member.id}><legend><span style={{ background: member.color }}>{member.initial}</span>{member.name}</legend><label>Name<input name={`${member.id}-name`} defaultValue={member.name} required /></label><div className="formRow"><label>Reaction<select name={`${member.id}-emoji`} defaultValue={member.celebrationEmoji}>{celebrationChoices.map((emoji) => <option key={emoji}>{emoji}</option>)}</select></label><label>Cheer<input name={`${member.id}-message`} defaultValue={member.celebrationMessage} maxLength={40} /></label></div></fieldset>)}
+      {state.members.map((member) => <fieldset className="personEditor" key={member.id}><legend><span style={{ background: member.color }}>{member.initial}</span>{member.name}</legend><label>Name<input name={`${member.id}-name`} defaultValue={member.name} required /></label><div className="formRow"><label>Reaction<select name={`${member.id}-emoji`} defaultValue={member.celebrationEmoji}>{celebrationChoices.map((choice) => <option key={choice.emoji} value={choice.emoji}>{choice.emoji} {choice.name}</option>)}</select></label><label>Cheer<input name={`${member.id}-message`} defaultValue={member.celebrationMessage} maxLength={40} /></label></div></fieldset>)}
       <button className="saveButton" type="submit">Save team</button>
     </form></div>}
 
