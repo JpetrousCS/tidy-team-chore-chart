@@ -32,6 +32,7 @@ const coreChores = [
   { slug: "tidy", title: "Tidy your things", detail: "Toys, clothes & belongings", icon: "🧸", points: 8, routine: "evening" as Routine },
   { slug: "bath", title: "Take a shower or bath", detail: "Get squeaky clean", icon: "🛁", points: 10, routine: "evening" as Routine },
   { slug: "room", title: "Clean your room", detail: "Put things back where they belong", icon: "🧹", points: 15, routine: "evening" as Routine },
+  { slug: "dad-project", title: "Help Dad with a project", detail: "Family teamwork", icon: "🛠️", points: 15, routine: "anytime" as Routine },
 ] as const;
 const suggestedChores = [
   { title: "Put dirty clothes in the hamper", detail: "Little helper", icon: "👕", points: 5, cadence: "daily" as const },
@@ -94,6 +95,7 @@ function normalizeState(saved: AppState): AppState {
     if (value.includes("tidy your things") || value.includes("pick up your toys")) return "tidy";
     if (value.includes("shower") || value.includes("bath")) return "bath";
     if (value.includes("clean your room")) return "room";
+    if (value.includes("help dad") && value.includes("project")) return "dad-project";
     return null;
   };
   const replacedIds = new Map<string, string>();
