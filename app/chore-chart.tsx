@@ -146,7 +146,8 @@ export function ChoreChart() {
   const [state, setState] = useState<AppState>(() => normalizeState(starterState));
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [activeMember, setActiveMember] = useState("all");
-  const [tab, setTab] = useState<"today" | "week">("today");
+  const [tab, setTab] = useState<"today" | "week" | "family">("today");
+  const [familyRange, setFamilyRange] = useState<"day" | "week">("day");
   const [showAdd, setShowAdd] = useState(false);
   const [editingChore, setEditingChore] = useState<Chore | null>(null);
   const [showPeople, setShowPeople] = useState(false);
@@ -419,8 +420,8 @@ export function ChoreChart() {
 
     <section className="dashboard" aria-label="Chore chart">
       <div className="controls">
-        <div className="tabs"><button className={tab === "today" ? "active" : ""} onClick={() => setTab("today")}>My day</button><button className={tab === "week" ? "active" : ""} onClick={() => setTab("week")}>Our week</button></div>
-        <div className="memberFilters"><button className={activeMember === "all" ? "active" : ""} onClick={() => setActiveMember("all")}>Everyone</button>{state.members.map((m) => <button key={m.id} className={activeMember === m.id ? "active" : ""} onClick={() => setActiveMember(m.id)}><span style={{ background: m.color }}>{m.initial}</span>{m.name}</button>)}</div>
+        <div className="tabs"><button className={tab === "today" ? "active" : ""} onClick={() => setTab("today")}>My day</button><button className={tab === "week" ? "active" : ""} onClick={() => setTab("week")}>Our week</button><button className={tab === "family" ? "active" : ""} onClick={() => setTab("family")}>Kids side by side</button></div>
+        {tab !== "family" ? <div className="memberFilters"><button className={activeMember === "all" ? "active" : ""} onClick={() => setActiveMember("all")}>Everyone</button>{state.members.map((m) => <button key={m.id} className={activeMember === m.id ? "active" : ""} onClick={() => setActiveMember(m.id)}><span style={{ background: m.color }}>{m.initial}</span>{m.name}</button>)}</div> : <div className="familyRange" aria-label="Family board range"><button className={familyRange === "day" ? "active" : ""} onClick={() => setFamilyRange("day")}>Day</button><button className={familyRange === "week" ? "active" : ""} onClick={() => setFamilyRange("week")}>Week</button></div>}
         {isParent && <><button className="ideaButton" onClick={() => setShowSuggestions(true)}>💡 Chore ideas</button><button className="addButton" onClick={() => setShowAdd(true)}>＋ Add a job</button></>}
       </div>
       <div className="weekStrip">{weekDates.map((date) => <button key={iso(date)} className={iso(date) === selectedIso ? "active" : ""} onClick={() => setSelectedDate(date)}><span>{dayNames[date.getDay()]}</span><strong>{date.getDate()}</strong>{iso(date) === iso() && <i>Today</i>}</button>)}</div>
@@ -434,13 +435,23 @@ export function ChoreChart() {
           <div className="cardMeta">{collaborators?.length ? <span className="assigned teamAssigned"><span className="miniStack">{collaborators.map((person) => <i key={person.id} style={{ background: person.color }}>{person.initial}</i>)}</span>Team chore</span> : <span className="assigned" style={{ color: member.color }}><i style={{ background: member.color }}>{member.initial}</i>{member.name}</span>}<strong>{chore.cadence === "flexible" ? `${count}/${chore.weeklyGoal ?? 1} this week · ` : ""}⭐ +{chore.points + (collaborators?.length ? chore.teamBonus ?? 5 : 0)}{collaborators?.length ? ` each (${chore.teamBonus ?? 5} bonus)` : ""}</strong>{chore.cadence === "flexible" && count > 0 && isParent && <button className="undoCount" onClick={() => undoFlexible(chore.id)}>Undo last</button>}</div>
         </article>;
       })}{visibleChores.length === 0 && <div className="empty"><span>☀️</span><h2>All clear</h2><p>No chores are scheduled for this view.</p></div>}</div>
-      : <div className="weeklyTable"><div className="weeklyHead"><span>Chore</span>{weekDates.map((date) => <span key={iso(date)}>{dayNames[date.getDay()]}</span>)}</div>{visibleChores.map((chore) => {
+      : tab === "week" ? <div className="weeklyTable"><div className="weeklyHead"><span>Chore</span>{weekDates.map((date) => <span key={iso(date)}>{dayNames[date.getDay()]}</span>)}</div>{visibleChores.map((chore) => {
         const member = state.members.find((entry) => entry.id === chore.memberId)!;
         return <div className="weeklyRow" key={chore.id}><div className="weeklyChoreName"><b>{chore.icon} {chore.title}</b><small style={{ color: chore.memberIds?.length ? "#6957d5" : member.color }}>{chore.memberIds?.length ? "Tidy Team" : member.name} · {chore.points + (chore.memberIds?.length ? chore.teamBonus ?? 5 : 0)} pts{chore.memberIds?.length ? ` each (${chore.teamBonus ?? 5} bonus)` : ""}</small>{isParent && <button className="weeklyEdit" onClick={() => setEditingChore(chore)} aria-label={`Edit or remove ${chore.title}`}>✎ Edit</button>}</div>{weekDates.map((date) => {
           const allowed = scheduledOn(chore, date); const dayCount = state.completions.filter((item) => item.choreId === chore.id && item.date === iso(date)).length; const done = chore.cadence === "flexible" ? flexibleCount(chore.id) >= (chore.weeklyGoal ?? 1) : isComplete(chore.id, iso(date));
           return <button key={iso(date)} disabled={!allowed || (chore.cadence === "flexible" && done)} className={done ? "complete" : ""} onClick={() => chore.cadence === "flexible" ? recordFlexible(chore, iso(date)) : toggle(chore.id, iso(date))} aria-label={`${chore.title}, ${dayNames[date.getDay()]}`}>{allowed ? (chore.cadence === "flexible" ? (dayCount ? `+${dayCount}` : "+") : done ? "✓" : "○") : "—"}</button>;
         })}</div>;
-      })}</div>}
+      })}</div>
+      : <div className="familyBoard" aria-label={`${familyRange === "day" ? "Daily" : "Weekly"} chores by child`}>
+        {state.members.map((member) => { const memberChores = state.chores.filter((chore) => (chore.memberId === member.id || chore.memberIds?.includes(member.id)) && (familyRange === "week" || scheduledOn(chore, selectedDate))); const completed = memberChores.filter((chore) => familyRange === "day" ? isComplete(chore.id) : weekDates.some((date) => isComplete(chore.id, iso(date)))).length; return <section className="familyColumn" key={member.id} style={{ "--member-color": member.color } as React.CSSProperties}>
+          <header><span style={{ background: member.color }}>{member.initial}</span><div><h2>{member.name}</h2><small>{completed} of {memberChores.length} started</small></div><strong>⭐ {pointsByMember.find((entry) => entry.id === member.id)?.points ?? 0}</strong></header>
+          <div className="familyProgress"><i style={{ width: `${memberChores.length ? Math.round((completed / memberChores.length) * 100) : 0}%`, background: member.color }} /></div>
+          <div className="familyChores">{memberChores.map((chore) => { const team = Boolean(chore.memberIds?.length); const doneToday = isComplete(chore.id); return <article className={`${doneToday ? "done" : ""} ${team ? "team" : ""}`} key={chore.id}>
+            <div className="familyChoreTitle"><span>{chore.icon}</span><div><strong>{chore.title}</strong><small>{team ? `Team · +${chore.points + (chore.teamBonus ?? 5)} each` : `+${chore.points} stars`}</small></div>{familyRange === "day" && <button className="familyCheck" onClick={() => chore.cadence === "flexible" ? recordFlexible(chore) : toggle(chore.id)} aria-label={`${doneToday ? "Mark incomplete" : "Complete"} ${chore.title} for ${member.name}`}>{doneToday ? "✓" : ""}</button>}</div>
+            {familyRange === "week" && <div className="familyWeek">{weekDates.map((date) => { const allowed = scheduledOn(chore, date); const done = isComplete(chore.id, iso(date)); return <button key={iso(date)} disabled={!allowed} className={done ? "done" : ""} onClick={() => chore.cadence === "flexible" ? recordFlexible(chore, iso(date)) : toggle(chore.id, iso(date))} aria-label={`${chore.title} for ${member.name}, ${dayNames[date.getDay()]}`}><span>{dayNames[date.getDay()].slice(0, 1)}</span><b>{done ? "✓" : allowed ? "○" : "—"}</b></button>; })}</div>}
+          </article>; })}{memberChores.length === 0 && <p className="familyEmpty">Nothing scheduled—enjoy the break! ☀️</p>}</div>
+        </section>; })}
+      </div>}
     </section>
     <footer><span>👆 Tap the big circle when your job is finished.</span><span>Kind helpers make happy homes! ⭐</span></footer>
 
