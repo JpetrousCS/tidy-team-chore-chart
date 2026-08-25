@@ -6,11 +6,19 @@ type Member = { id: string; name: string; initial: string; color: string; celebr
 type Cadence = "daily" | "weekly" | "monthly";
 type Chore = { id: string; title: string; detail: string; icon: string; points: number; memberId: string; cadence: Cadence; dueDay?: number; dueDate?: number };
 type Completion = { choreId: string; date: string };
-type AppState = { household: string; members: Member[]; chores: Chore[]; completions: Completion[] };
+type Reward = { id: string; title: string; detail: string; emoji: string; cost: number };
+type Redemption = { id: string; rewardId: string; rewardTitle: string; memberId: string; cost: number; redeemedAt: string };
+type AppState = { household: string; members: Member[]; chores: Chore[]; completions: Completion[]; rewards: Reward[]; redemptions: Redemption[] };
 type CalendarEvent = { id: string; title: string; start: string; end: string; allDay: boolean; location: string; calendar: string; type: "kids" | "work" | "family"; color: string };
 
 const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const celebrationChoices = ["🦄", "✨", "🌈", "🧚", "🏎️", "🚀", "🦖", "⚽", "🐉", "🎉", "🏆", "⭐"];
+const starterRewards: Reward[] = [
+  { id: "tablet-30", title: "30 minutes of tablet time", detail: "Choose a favorite app or show", emoji: "📱", cost: 40 },
+  { id: "games-30", title: "30 minutes of video games", detail: "Bonus game time", emoji: "🎮", cost: 50 },
+  { id: "putt-putt", title: "Putt-putt and ice cream", detail: "A special family outing", emoji: "⛳", cost: 250 },
+  { id: "kids-empire", title: "Visit to Kids Empire", detail: "Indoor play adventure", emoji: "🏰", cost: 350 },
+];
 const coreChores = [
   { slug: "teeth", title: "Brush your teeth", detail: "Morning & bedtime", icon: "🪥", points: 5 },
   { slug: "bed", title: "Make your bed", detail: "Start the day tidy", icon: "🛏️", points: 5 },
@@ -59,6 +67,8 @@ const starterState: AppState = {
     { id: "dad-project", title: "Help Dad with a project", detail: "Weekend teamwork", icon: "🛠️", points: 25, memberId: "henry", cadence: "weekly", dueDay: 6 },
   ],
   completions: [],
+  rewards: starterRewards,
+  redemptions: [],
 };
 
 function normalizeState(saved: AppState): AppState {
@@ -83,7 +93,7 @@ function normalizeState(saved: AppState): AppState {
   });
   for (const member of members) for (const core of coreChores) chores.push({ id: `${member.id}-${core.slug}`, title: core.title, detail: core.detail, icon: core.icon, points: core.points, memberId: member.id, cadence: "daily" });
   const completions = Array.from(new Map(saved.completions.map((item) => { const mapped = { ...item, choreId: replacedIds.get(item.choreId) || item.choreId }; return [`${mapped.choreId}-${mapped.date}`, mapped]; })).values());
-  return { ...saved, members, chores, completions };
+  return { ...saved, members, chores, completions, rewards: saved.rewards ?? starterRewards, redemptions: saved.redemptions ?? [] };
 }
 
 const iso = (date = new Date()) => date.toISOString().slice(0, 10);
@@ -101,7 +111,9 @@ export function ChoreChart() {
   const [editingChore, setEditingChore] = useState<Chore | null>(null);
   const [showPeople, setShowPeople] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [showRewardEditor, setShowRewardEditor] = useState(false);
   const [suggestionMember, setSuggestionMember] = useState("charli");
+  const [rewardMember, setRewardMember] = useState("charli");
   const [celebration, setCelebration] = useState<{ emoji: string; color: string; name: string; message: string } | null>(null);
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [calendarConfigured, setCalendarConfigured] = useState<boolean | null>(null);
@@ -172,10 +184,11 @@ export function ChoreChart() {
     return { completed, possible, percent: possible ? Math.round((completed / possible) * 100) : 0 };
   }, [state.chores, state.completions, weekDates]);
 
-  const pointsByMember = state.members.map((member) => ({ ...member, points: state.completions.reduce((sum, item) => {
+  const pointsByMember = state.members.map((member) => ({ ...member, earned: state.completions.reduce((sum, item) => {
     const chore = state.chores.find((entry) => entry.id === item.choreId && entry.memberId === member.id);
     return sum + (chore ? chore.points : 0);
-  }, 0) })).sort((a, b) => b.points - a.points);
+  }, 0), spent: state.redemptions.filter((item) => item.memberId === member.id).reduce((sum, item) => sum + item.cost, 0) })).map((member) => ({ ...member, points: member.earned - member.spent })).sort((a, b) => b.points - a.points);
+  const rewardKid = pointsByMember.find((member) => member.id === rewardMember) ?? pointsByMember[0];
 
   const addChore = (form: FormData) => {
     const title = String(form.get("title") || "").trim();
@@ -208,6 +221,22 @@ export function ChoreChart() {
     persist({ ...state, chores: [...state.chores, chore] });
   };
 
+  const redeemReward = (reward: Reward) => {
+    if (!rewardKid || rewardKid.points < reward.cost) return;
+    const redemption: Redemption = { id: `${Date.now()}`, rewardId: reward.id, rewardTitle: reward.title, memberId: rewardKid.id, cost: reward.cost, redeemedAt: new Date().toISOString() };
+    persist({ ...state, redemptions: [...state.redemptions, redemption] });
+    setCelebration({ emoji: reward.emoji, color: rewardKid.color, name: rewardKid.name, message: "Reward unlocked—enjoy it," });
+    window.setTimeout(() => setCelebration(null), 1800);
+  };
+
+  const addReward = (form: FormData) => {
+    const title = String(form.get("title") || "").trim();
+    if (!title) return;
+    const reward: Reward = { id: `${Date.now()}`, title, detail: String(form.get("detail") || "A custom family reward").trim(), emoji: String(form.get("emoji") || "🎁"), cost: Math.max(1, Number(form.get("cost")) || 25) };
+    persist({ ...state, rewards: [...state.rewards, reward] });
+    setShowRewardEditor(false);
+  };
+
   return <main className="shell">
     <header className="topbar">
       <a className="brand" href="#top"><span className="brandMark">✓</span><span>Tidy Team</span></a>
@@ -227,6 +256,13 @@ export function ChoreChart() {
       <div className="calendarTitle"><div><p className="eyebrow">Family schedule</p><h2 id="calendar-heading">What’s happening this week?</h2></div><div className="calendarLegend"><span><i className="kidsDot" />Kid visits</span><span><i className="workDot" />Work</span><span><i className="familyDot" />Family</span></div></div>
       {calendarEvents.length > 0 ? <div className="eventRail">{calendarEvents.map((event) => { const start = new Date(event.start); const end = new Date(event.end); return <article className="eventCard" key={event.id} style={{ "--event-color": event.color } as React.CSSProperties}><div className="eventDate"><strong>{dayNames[start.getDay()]}</strong><span>{start.getDate()}</span></div><div><small>{event.calendar}</small><h3>{event.title}</h3><p>{event.allDay ? "All day" : `${start.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}–${end.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`}{event.location ? ` · ${event.location}` : ""}</p></div></article>; })}</div>
       : <div className="calendarEmpty"><span>🗓️</span><div><strong>{calendarConfigured === false ? "Your calendars are ready to connect" : "No events this week"}</strong><p>{calendarConfigured === false ? "Add your private Google, iCloud, or Outlook calendar feed during deployment." : "Looks like a wide-open week!"}</p></div></div>}
+    </section>
+
+    <section className="rewardsShop" aria-labelledby="rewards-heading">
+      <div className="rewardsTop"><div><p className="eyebrow">Spend your stars</p><h2 id="rewards-heading">Rewards Shop</h2></div><button className="ideaButton" onClick={() => setShowRewardEditor(true)}>＋ Custom reward</button></div>
+      <div className="rewardMembers">{pointsByMember.map((member) => <button key={member.id} className={rewardMember === member.id ? "active" : ""} onClick={() => setRewardMember(member.id)}><span style={{ background: member.color }}>{member.initial}</span><strong>{member.name}</strong><b>⭐ {member.points}</b></button>)}</div>
+      <div className="rewardRail">{state.rewards.map((reward) => { const affordable = Boolean(rewardKid && rewardKid.points >= reward.cost); return <article className="rewardCard" key={reward.id}><span>{reward.emoji}</span><div><h3>{reward.title}</h3><p>{reward.detail}</p></div><button disabled={!affordable} onClick={() => redeemReward(reward)}>{affordable ? `Redeem · ⭐ ${reward.cost}` : `Need ⭐ ${reward.cost}`}</button></article>; })}</div>
+      {state.redemptions.length > 0 && <details className="rewardHistory"><summary>Recent rewards</summary>{state.redemptions.slice(-5).reverse().map((item) => { const member = state.members.find((entry) => entry.id === item.memberId); return <p key={item.id}><span>{member?.name} redeemed <strong>{item.rewardTitle}</strong> for ⭐ {item.cost}</span><button onClick={() => persist({ ...state, redemptions: state.redemptions.filter((entry) => entry.id !== item.id) })}>Undo</button></p>; })}</details>}
     </section>
 
     <section className="dashboard" aria-label="Chore chart">
@@ -290,6 +326,15 @@ export function ChoreChart() {
       <label>Assign ideas to<select value={suggestionMember} onChange={(event) => setSuggestionMember(event.target.value)}>{state.members.map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select></label>
       <div className="suggestionList">{suggestedChores.map((suggestion) => <button type="button" key={suggestion.title} onClick={() => addSuggestion(suggestion)}><span>{suggestion.icon}</span><span><strong>{suggestion.title}</strong><small>{suggestion.detail} · {suggestion.cadence}</small></span><b>＋</b></button>)}</div>
     </section></div>}
+
+    {showRewardEditor && <div className="modalBackdrop" onMouseDown={(event) => event.target === event.currentTarget && setShowRewardEditor(false)}><form className="modal" action={addReward}>
+      <button type="button" className="close" onClick={() => setShowRewardEditor(false)} aria-label="Close">×</button><p className="eyebrow">Make it your own</p><h2>Add a reward</h2>
+      <label>Reward name<input name="title" placeholder="e.g. Pick Friday's movie" autoFocus required /></label>
+      <label>What they earn<input name="detail" placeholder="A short description" /></label>
+      <div className="formRow"><label>Emoji<select name="emoji" defaultValue="🎁"><option>🎁</option><option>📱</option><option>🎮</option><option>🍦</option><option>⛳</option><option>🏰</option><option>🎬</option><option>🍕</option><option>🛝</option><option>⭐</option></select></label><label>Star cost<input name="cost" type="number" min="1" max="10000" defaultValue="100" /></label></div>
+      <button className="saveButton" type="submit">Add to the shop</button>
+      {state.rewards.length > 0 && <div className="manageRewards"><strong>Current rewards</strong>{state.rewards.map((reward) => <div key={reward.id}><span>{reward.emoji} {reward.title} · ⭐ {reward.cost}</span><button type="button" onClick={() => persist({ ...state, rewards: state.rewards.filter((item) => item.id !== reward.id) })}>Remove</button></div>)}</div>}
+    </form></div>}
 
     {celebration && <div className="celebration" aria-live="polite" style={{ "--celebrate": celebration.color } as React.CSSProperties}><div className="burst"><i>✦</i><i>★</i><span>{celebration.emoji}</span><i>✦</i><i>★</i></div><strong>{celebration.message} {celebration.name}!</strong></div>}
   </main>;
