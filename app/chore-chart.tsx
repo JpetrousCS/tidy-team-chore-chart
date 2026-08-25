@@ -17,6 +17,7 @@ type NotificationSettings = { enabled: boolean; evening: boolean; rewards: boole
 type AccessibilitySettings = { highContrast: boolean; largeText: boolean; reducedMotion: boolean; sounds: boolean; spokenChores: boolean };
 type AppState = { household: string; members: Member[]; chores: Chore[]; completions: Completion[]; rewards: Reward[]; redemptions: Redemption[]; adjustments: PointAdjustment[]; removedDefaultChoreIds: string[]; pointPolicy: PointPolicy; notificationSettings: NotificationSettings; accessibilitySettings: AccessibilitySettings };
 type CalendarEvent = { id: string; title: string; start: string; end: string; allDay: boolean; location: string; calendar: string; type: "kids" | "work" | "family"; color: string };
+type CalendarFeedSummary = { id: string; name: string; type: "kids" | "work" | "family"; color: string };
 
 const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const celebrationChoices = [
@@ -176,6 +177,9 @@ export function ChoreChart() {
   const [proofChore, setProofChore] = useState<Chore | null>(null);
   const [proofDate, setProofDate] = useState("");
   const [proofError, setProofError] = useState("");
+  const [showCalendarSettings, setShowCalendarSettings] = useState(false);
+  const [calendarFeeds, setCalendarFeeds] = useState<CalendarFeedSummary[]>([]);
+  const [calendarError, setCalendarError] = useState("");
   const [syncLabel, setSyncLabel] = useState("Loading…");
 
   useEffect(() => {
@@ -373,6 +377,9 @@ export function ChoreChart() {
     const chores = state.members.map((member, index) => ({ id: `${member.id}-calendar-${Date.now()}-${index}`, title, ...template, memberId: member.id, cadence: "weekly" as Cadence, routine: "anytime" as Routine, dueDay: selectedDate.getDay() }));
     persist({ ...state, chores: [...state.chores, ...chores] });
   };
+  const openCalendarSettings = async () => { setCalendarError(""); const response = await fetch("/api/calendar/settings", { cache: "no-store" }); if (response.ok) { const data = await response.json(); setCalendarFeeds(data.feeds ?? []); setShowCalendarSettings(true); } else { setCalendarError("Connect Postgres before adding private calendar feeds."); setShowCalendarSettings(true); } };
+  const addCalendarFeed = async (form: FormData) => { setCalendarError(""); const response = await fetch("/api/calendar/settings", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: form.get("name"), url: form.get("url"), type: form.get("type") }) }); const result = await response.json(); if (!response.ok) { setCalendarError(result.error || "Calendar could not be added."); return; } await openCalendarSettings(); };
+  const removeCalendarFeed = async (id: string) => { const response = await fetch(`/api/calendar/settings?id=${encodeURIComponent(id)}`, { method: "DELETE" }); if (response.ok) setCalendarFeeds(calendarFeeds.filter((feed) => feed.id !== id)); };
 
   const redeemReward = (reward: Reward) => {
     if (!rewardKid || rewardKid.points < reward.cost) return;
@@ -560,9 +567,15 @@ export function ChoreChart() {
       <section className="activityLedger"><div><strong>Family activity</strong><input aria-label="Search activity" placeholder="Search chores, rewards, or names" value={activitySearch} onChange={(event) => setActivitySearch(event.target.value)} /></div>{activityLedger.filter((item) => item.text.toLowerCase().includes(activitySearch.toLowerCase())).slice(0, 30).map((item) => <p key={item.id}><span>{item.kind}</span><span>{item.text}</span><time>{item.date}</time></p>)}</section>
       <div className="dashboardRules"><strong>Point rules</strong><span>{state.pointPolicy.reset === "never" ? "No automatic reset" : `Reset ${state.pointPolicy.reset}`}</span><span>{state.pointPolicy.dailyEarnLimit > 0 ? `${state.pointPolicy.dailyEarnLimit} points/day maximum` : "No daily limit"}</span><span>{state.pointPolicy.maxBalance > 0 ? `${state.pointPolicy.maxBalance} maximum balance` : "No balance limit"}</span></div>
       <div className="parentActions"><button onClick={() => { setShowParentDashboard(false); setShowPeople(true); }}>👨‍👩‍👧 Edit family, reactions & points</button><button onClick={() => { setShowParentDashboard(false); setShowAdd(true); }}>＋ Add a chore</button><button onClick={() => { setShowParentDashboard(false); setShowSuggestions(true); }}>💡 Browse chore ideas</button><button onClick={() => { setShowParentDashboard(false); setShowRewardEditor(true); }}>🎁 Manage rewards</button></div>
-      <p className="calendarAdminStatus"><strong>Calendar:</strong> {calendarConfigured ? `${calendarEvents.length} events loaded for this week.` : "Ready for private Google, iCloud, or Outlook feed links."}</p>
+      <p className="calendarAdminStatus"><strong>Calendar:</strong> {calendarConfigured ? `${calendarEvents.length} events loaded for this week.` : "Ready for private Google, iCloud, or Outlook feed links."}</p><button className="passkeySetup" onClick={openCalendarSettings}>🗓️ Connect & manage calendars</button>
       {biometricSupported && <button className="passkeySetup" onClick={enrollPasskey}>👆 {passkeyAvailable ? "Add another trusted thumbprint" : "Set up thumbprint / Face ID"}</button>}{pinError && <p className="pinError" role="alert">{pinError}</p>}<button className="lockParent" onClick={lockParent}>🔒 Lock Parent Mode</button>
     </section></div>}
+
+    {showCalendarSettings && isParent && <div className="modalBackdrop" onMouseDown={(event) => event.target === event.currentTarget && setShowCalendarSettings(false)}><form className="modal calendarSettings" action={addCalendarFeed}>
+      <button type="button" className="close" onClick={() => setShowCalendarSettings(false)} aria-label="Close">×</button><p className="eyebrow">Private family schedule</p><h2>Connect calendars</h2><p className="modalIntro">Paste a private iCal/ICS subscription link from Google Calendar, Apple Calendar, or Outlook. Links stay on the protected server and are never sent to the public page.</p>
+      <label>Calendar name<input name="name" placeholder="Dad’s work calendar" required /></label><label>Private iCal / ICS link<input name="url" type="text" inputMode="url" placeholder="https://… or webcal://…" required /></label><label>Calendar type<select name="type"><option value="kids">Kid visits</option><option value="work">Work meetings</option><option value="family">Family plans</option></select></label>{calendarError && <p className="pinError" role="alert">{calendarError}</p>}<button className="saveButton" type="submit">Connect calendar</button>
+      {calendarFeeds.length > 0 && <div className="connectedFeeds"><strong>Connected calendars</strong>{calendarFeeds.map((feed) => <p key={feed.id}><i style={{ background: feed.color }} /><span>{feed.name}<small>{feed.type}</small></span><button type="button" onClick={() => removeCalendarFeed(feed.id)}>Remove</button></p>)}</div>}
+    </form></div>}
 
     {proofChore && <div className="modalBackdrop" onMouseDown={(event) => event.target === event.currentTarget && setProofChore(null)}><form className="modal" action={submitPhotoProof}>
       <button type="button" className="close" onClick={() => setProofChore(null)} aria-label="Close">×</button><p className="eyebrow">Photo verification</p><h2>Show the finished job</h2><p className="modalIntro">Take or choose a photo for “{proofChore.title}.” A parent will approve the points.</p><label>Completion photo<input name="file" type="file" accept="image/*" capture="environment" required /></label>{!isParent && <p className="pinError">Unlock Parent Mode before securely uploading this photo.</p>}{proofError && <p className="pinError" role="alert">{proofError}</p>}<button className="saveButton" type="submit" disabled={!isParent}>Upload for approval</button>
