@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 type Member = { id: string; name: string; initial: string; color: string; celebrationEmoji: string; celebrationMessage: string };
 type Cadence = "daily" | "weekly" | "monthly";
 type Routine = "morning" | "afternoon" | "evening" | "anytime";
-type Chore = { id: string; title: string; detail: string; icon: string; points: number; memberId: string; cadence: Cadence; routine?: Routine; dueDay?: number; dueDate?: number };
+type Chore = { id: string; title: string; detail: string; icon: string; points: number; memberId: string; memberIds?: string[]; cadence: Cadence; routine?: Routine; dueDay?: number; dueDate?: number };
 type Completion = { choreId: string; date: string };
 type Reward = { id: string; title: string; detail: string; emoji: string; cost: number };
 type Redemption = { id: string; rewardId: string; rewardTitle: string; memberId: string; cost: number; redeemedAt: string; status?: "pending" | "approved" };
@@ -166,7 +166,7 @@ export function ChoreChart() {
       .catch(() => setCalendarConfigured(false));
   }, [weekDates]);
   const visibleChores = state.chores.filter((chore) => {
-    const memberMatches = activeMember === "all" || chore.memberId === activeMember;
+    const memberMatches = activeMember === "all" || chore.memberId === activeMember || chore.memberIds?.includes(activeMember);
     const dateMatches = scheduledOn(chore, selectedDate);
     return memberMatches && (tab === "week" || dateMatches);
   });
@@ -180,7 +180,10 @@ export function ChoreChart() {
     if (!wasComplete) {
       const chore = state.chores.find((item) => item.id === choreId);
       const member = state.members.find((item) => item.id === chore?.memberId);
-      if (member) {
+      if (chore?.memberIds?.length) {
+        setCelebration({ emoji: "🤝", color: "#6957d5", name: "Tidy Team", message: "Amazing teamwork," });
+        window.setTimeout(() => setCelebration(null), 1500);
+      } else if (member) {
         setCelebration({ emoji: member.celebrationEmoji, color: member.color, name: member.name, message: member.celebrationMessage });
         window.setTimeout(() => setCelebration(null), 1500);
       }
@@ -195,7 +198,7 @@ export function ChoreChart() {
   }, [state.chores, state.completions, weekDates]);
 
   const pointsByMember = state.members.map((member) => ({ ...member, earned: state.completions.reduce((sum, item) => {
-    const chore = state.chores.find((entry) => entry.id === item.choreId && entry.memberId === member.id);
+    const chore = state.chores.find((entry) => entry.id === item.choreId && (entry.memberId === member.id || entry.memberIds?.includes(member.id)));
     return sum + (chore ? chore.points : 0);
   }, 0), spent: state.redemptions.filter((item) => item.memberId === member.id && item.status !== "pending").reduce((sum, item) => sum + item.cost, 0) })).map((member) => ({ ...member, points: member.earned - member.spent })).sort((a, b) => b.points - a.points);
   const rewardKid = pointsByMember.find((member) => member.id === rewardMember) ?? pointsByMember[0];
@@ -210,8 +213,8 @@ export function ChoreChart() {
       icon: String(form.get("icon") || "✨"), points: Number(form.get("points")) || 5,
       cadence, routine: String(form.get("routine")) as Routine, ...(cadence === "weekly" ? { dueDay: Number(form.get("dueDay")) } : {}), ...(cadence === "monthly" ? { dueDate: Number(form.get("dueDate")) } : {}),
     };
-    const assignees = assignee === "all" ? state.members.map((member) => member.id) : [assignee];
-    const chores = assignees.map((memberId, index) => ({ id: `${Date.now()}-${index}`, memberId, ...base }));
+    const assignees = assignee === "all" ? state.members.map((member) => member.id) : assignee === "team" ? ["team"] : [assignee];
+    const chores = assignees.map((memberId, index) => memberId === "team" ? ({ id: `${Date.now()}-${index}`, memberId: state.members[0].id, memberIds: state.members.map((member) => member.id), ...base }) : ({ id: `${Date.now()}-${index}`, memberId, ...base }));
     persist({ ...state, chores: [...state.chores, ...chores] });
     setShowAdd(false);
   };
@@ -219,7 +222,8 @@ export function ChoreChart() {
   const saveChore = (form: FormData) => {
     if (!editingChore) return;
     const cadence = String(form.get("cadence")) as Cadence;
-    const updated: Chore = { ...editingChore, title: String(form.get("title") || editingChore.title), detail: String(form.get("detail") || editingChore.detail), icon: String(form.get("icon")), points: Number(form.get("points")) || 1, memberId: String(form.get("memberId")), cadence, routine: String(form.get("routine")) as Routine, dueDay: cadence === "weekly" ? Number(form.get("dueDay")) : undefined, dueDate: cadence === "monthly" ? Number(form.get("dueDate")) : undefined };
+    const assignee = String(form.get("memberId"));
+    const updated: Chore = { ...editingChore, title: String(form.get("title") || editingChore.title), detail: String(form.get("detail") || editingChore.detail), icon: String(form.get("icon")), points: Number(form.get("points")) || 1, memberId: assignee === "team" ? state.members[0].id : assignee, memberIds: assignee === "team" ? state.members.map((member) => member.id) : undefined, cadence, routine: String(form.get("routine")) as Routine, dueDay: cadence === "weekly" ? Number(form.get("dueDay")) : undefined, dueDate: cadence === "monthly" ? Number(form.get("dueDate")) : undefined };
     persist({ ...state, chores: state.chores.map((chore) => chore.id === updated.id ? updated : chore) });
     setEditingChore(null);
   };
@@ -301,15 +305,16 @@ export function ChoreChart() {
 
       {tab === "today" ? <div className="choreGrid">{visibleChores.map((chore) => {
         const member = state.members.find((entry) => entry.id === chore.memberId)!; const done = isComplete(chore.id);
-        return <article className={`choreCard ${done ? "done" : ""}`} key={chore.id} style={{ "--member-color": member.color } as React.CSSProperties}>
+        const collaborators = chore.memberIds?.map((id) => state.members.find((entry) => entry.id === id)).filter(Boolean) as Member[] | undefined;
+        return <article className={`choreCard ${done ? "done" : ""} ${collaborators?.length ? "teamChore" : ""}`} key={chore.id} style={{ "--member-color": collaborators?.length ? "#6957d5" : member.color } as React.CSSProperties}>
           <button className="check" onClick={() => toggle(chore.id)} aria-label={`${done ? "Mark incomplete" : "Complete"} ${chore.title}`}>{done ? "✓" : ""}</button>{isParent && <button className="editChore" onClick={() => setEditingChore(chore)} aria-label={`Edit ${chore.title}`}>✎</button>}
           <div className="choreIcon">{chore.icon}</div><div className="choreCopy"><h2>{chore.title}</h2><p>{chore.detail}</p><span className="repeatBadge">↻ {repeatLabel(chore)}</span><span className="routineBadge">{routineLabel(chore.routine)}</span></div>
-          <div className="cardMeta"><span className="assigned" style={{ color: member.color }}><i style={{ background: member.color }}>{member.initial}</i>{member.name}</span><strong>⭐ +{chore.points}</strong></div>
+          <div className="cardMeta">{collaborators?.length ? <span className="assigned teamAssigned"><span className="miniStack">{collaborators.map((person) => <i key={person.id} style={{ background: person.color }}>{person.initial}</i>)}</span>Team chore</span> : <span className="assigned" style={{ color: member.color }}><i style={{ background: member.color }}>{member.initial}</i>{member.name}</span>}<strong>⭐ +{chore.points}{collaborators?.length ? " each" : ""}</strong></div>
         </article>;
       })}{visibleChores.length === 0 && <div className="empty"><span>☀️</span><h2>All clear</h2><p>No chores are scheduled for this view.</p></div>}</div>
       : <div className="weeklyTable"><div className="weeklyHead"><span>Chore</span>{weekDates.map((date) => <span key={iso(date)}>{dayNames[date.getDay()]}</span>)}</div>{visibleChores.map((chore) => {
         const member = state.members.find((entry) => entry.id === chore.memberId)!;
-        return <div className="weeklyRow" key={chore.id}><div><b>{chore.icon} {chore.title}</b><small style={{ color: member.color }}>{member.name} · {chore.points} pts</small></div>{weekDates.map((date) => {
+        return <div className="weeklyRow" key={chore.id}><div><b>{chore.icon} {chore.title}</b><small style={{ color: chore.memberIds?.length ? "#6957d5" : member.color }}>{chore.memberIds?.length ? "Tidy Team" : member.name} · {chore.points} pts{chore.memberIds?.length ? " each" : ""}</small></div>{weekDates.map((date) => {
           const allowed = scheduledOn(chore, date); const done = isComplete(chore.id, iso(date));
           return <button key={iso(date)} disabled={!allowed} className={done ? "complete" : ""} onClick={() => toggle(chore.id, iso(date))} aria-label={`${chore.title}, ${dayNames[date.getDay()]}`}>{allowed ? (done ? "✓" : "○") : "—"}</button>;
         })}</div>;
@@ -322,7 +327,7 @@ export function ChoreChart() {
       <label>Chore name<input name="title" placeholder="e.g. Sweep the kitchen" autoFocus required /></label>
       <label>Helpful note<input name="detail" placeholder="e.g. After dinner" /></label>
       <div className="formRow"><label>Icon<select name="icon" defaultValue="✨"><option>✨</option><option>🪥</option><option>🛏️</option><option>🧹</option><option>🧸</option><option>🛁</option><option>💜</option><option>💙</option><option>🛠️</option><option>🧺</option><option>🪴</option><option>🐾</option><option>♻️</option></select></label><label>Points<input name="points" type="number" min="1" max="100" defaultValue="10" /></label></div>
-      <div className="formRow"><label>Assigned to<select name="memberId"><option value="all">Everyone</option>{state.members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select></label><label>Routine<select name="routine" defaultValue="anytime"><option value="morning">Morning</option><option value="afternoon">After school</option><option value="evening">Evening</option><option value="anytime">Anytime</option></select></label></div>
+      <div className="formRow"><label>Assigned to<select name="memberId"><option value="all">Everyone — separately</option><option value="team">🤝 Team chore — together</option>{state.members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select></label><label>Routine<select name="routine" defaultValue="anytime"><option value="morning">Morning</option><option value="afternoon">After school</option><option value="evening">Evening</option><option value="anytime">Anytime</option></select></label></div>
       <label>Repeats<select name="cadence"><option value="daily">Every day</option><option value="weekly">Every week</option><option value="monthly">Every month</option></select></label>
       <div className="formRow"><label>Weekly day<select name="dueDay" defaultValue={selectedDate.getDay()}>{dayNames.map((day, index) => <option key={day} value={index}>{day}</option>)}</select></label><label>Monthly date<input name="dueDate" type="number" min="1" max="31" defaultValue={selectedDate.getDate()} /></label></div>
       <p className="fieldHint">Only the matching weekly day or monthly date will be used.</p>
@@ -334,7 +339,7 @@ export function ChoreChart() {
       <label>Chore name<input name="title" defaultValue={editingChore.title} required /></label>
       <label>Helpful note<input name="detail" defaultValue={editingChore.detail} /></label>
       <div className="formRow"><label>Icon<select name="icon" defaultValue={editingChore.icon}><option>✨</option><option>🪥</option><option>🛏️</option><option>🧹</option><option>🧸</option><option>🛁</option><option>💜</option><option>💙</option><option>🛠️</option><option>🧺</option><option>🪴</option><option>🐾</option><option>♻️</option><option>🍽️</option></select></label><label>Points<input name="points" type="number" min="1" max="100" defaultValue={editingChore.points} /></label></div>
-      <div className="formRow"><label>Assigned to<select name="memberId" defaultValue={editingChore.memberId}>{state.members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select></label><label>Routine<select name="routine" defaultValue={editingChore.routine ?? "anytime"}><option value="morning">Morning</option><option value="afternoon">After school</option><option value="evening">Evening</option><option value="anytime">Anytime</option></select></label></div>
+      <div className="formRow"><label>Assigned to<select name="memberId" defaultValue={editingChore.memberIds?.length ? "team" : editingChore.memberId}><option value="team">🤝 Team chore — together</option>{state.members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select></label><label>Routine<select name="routine" defaultValue={editingChore.routine ?? "anytime"}><option value="morning">Morning</option><option value="afternoon">After school</option><option value="evening">Evening</option><option value="anytime">Anytime</option></select></label></div>
       <label>Repeats<select name="cadence" defaultValue={editingChore.cadence}><option value="daily">Every day</option><option value="weekly">Every week</option><option value="monthly">Every month</option></select></label>
       <div className="formRow"><label>Weekly day<select name="dueDay" defaultValue={editingChore.dueDay ?? selectedDate.getDay()}>{dayNames.map((day, index) => <option key={day} value={index}>{day}</option>)}</select></label><label>Monthly date<input name="dueDate" type="number" min="1" max="31" defaultValue={editingChore.dueDate ?? selectedDate.getDate()} /></label></div>
       <p className="fieldHint">Only the matching weekly day or monthly date will be used.</p>
