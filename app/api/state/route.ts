@@ -20,8 +20,11 @@ export async function PUT(request: Request) {
     const rows = await sql`SELECT data FROM household_state WHERE id = ${HOUSEHOLD_ID}`;
     const current = rows[0]?.data;
     if (current) {
-      const protectedKeys = ["household", "members", "chores", "rewards", "removedDefaultChoreIds", "pointPolicy", "notificationSettings"];
-      const changed = protectedKeys.some((key) => JSON.stringify(current[key] ?? null) !== JSON.stringify(data[key] ?? null));
+      const protectedKeys = ["household", "chores", "rewards", "adjustments", "removedDefaultChoreIds", "pointPolicy", "notificationSettings", "accessibilitySettings"];
+      const changedProtectedKey = protectedKeys.some((key) => JSON.stringify(current[key] ?? null) !== JSON.stringify(data[key] ?? null));
+      const safeMembers = (members: Array<Record<string, unknown>> = []) => members.map((member) => { const copy = { ...member }; delete copy.rewardGoalId; return copy; });
+      const changedMembers = JSON.stringify(safeMembers(current.members)) !== JSON.stringify(safeMembers(data.members));
+      const changed = changedProtectedKey || changedMembers;
       if (changed) return NextResponse.json({ error: "Parent authorization required" }, { status: 403 });
     }
   }
