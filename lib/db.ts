@@ -18,3 +18,21 @@ export async function ensureTable() {
   )`;
   return sql;
 }
+
+export async function ensureAuthTables() {
+  const sql = getDb();
+  if (!sql) return null;
+  await sql`CREATE TABLE IF NOT EXISTS parent_passkeys (
+    id TEXT PRIMARY KEY,
+    public_key BYTEA NOT NULL,
+    counter BIGINT NOT NULL DEFAULT 0,
+    transports JSONB NOT NULL DEFAULT '[]'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`;
+  await sql`CREATE TABLE IF NOT EXISTS auth_challenges (
+    kind TEXT PRIMARY KEY,
+    challenge TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`;
+  return sql;
+}
