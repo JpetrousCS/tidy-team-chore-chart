@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { platformAuthenticatorIsAvailable, startAuthentication, startRegistration } from "@simplewebauthn/browser";
+import QRCode from "qrcode";
+import Image from "next/image";
 
 type Member = { id: string; name: string; initial: string; color: string; celebrationEmoji: string; celebrationMessage: string; rewardGoalId?: string };
 type Cadence = "daily" | "weekly" | "monthly" | "flexible";
@@ -27,6 +29,7 @@ type CalendarFeedSummary = { id: string; name: string; type: string; color: stri
 type WeatherReport = { zip: string; place: string; updatedAt: string; temperature: number; feelsLike: number; wind: number; precipitation: number; label: string; emoji: string; forecast: { date: string; high: number; low: number; label: string; emoji: string }[] };
 
 const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const familyAppUrl = "https://tidy-team-chore-chart.vercel.app/";
 const celebrationChoices = [
   { emoji: "🦄", name: "Unicorn" }, { emoji: "✨", name: "Sparkles" }, { emoji: "🌈", name: "Rainbow" },
   { emoji: "🧚", name: "Fairy" }, { emoji: "🏎️", name: "Race car" }, { emoji: "🚀", name: "Rocket" },
@@ -279,6 +282,9 @@ export function ChoreChart() {
   const [journalError, setJournalError] = useState("");
   const [showBadges, setShowBadges] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
+  const [showShare, setShowShare] = useState(false);
+  const [qrCodeUrl, setQrCodeUrl] = useState("");
+  const [shareStatus, setShareStatus] = useState("");
 
   useEffect(() => {
     const load = async () => {
@@ -300,6 +306,7 @@ export function ChoreChart() {
   }, []);
 
   useEffect(() => { setWeatherError(false); fetch(`/api/weather?zip=${encodeURIComponent(state.engagementSettings.weatherZip)}`, { cache: "no-store" }).then((response) => response.ok ? response.json() : Promise.reject()).then(setWeather).catch(() => setWeatherError(true)); }, [state.engagementSettings.weatherZip]);
+  useEffect(() => { if (!showShare || qrCodeUrl) return; QRCode.toDataURL(familyAppUrl, { width: 720, margin: 2, errorCorrectionLevel: "H", color: { dark: "#272820", light: "#fffdf8" } }).then(setQrCodeUrl).catch(() => setShareStatus("The QR code could not be generated.")); }, [showShare, qrCodeUrl]);
 
   useEffect(() => {
     if (!state.notificationSettings.enabled || !state.notificationSettings.evening || typeof Notification === "undefined" || Notification.permission !== "granted") return;
@@ -317,6 +324,7 @@ export function ChoreChart() {
       setSyncLabel("Synced");
     } catch { setSyncLabel("Saved on this device"); }
   };
+  const shareFamilyApp = async () => { setShareStatus(""); if (navigator.share) { try { await navigator.share({ title: `${state.household} · Tidy Team`, text: "Open our family chore chart", url: familyAppUrl }); setShareStatus("Shared!"); return; } catch { /* The share sheet may be dismissed. */ } } try { await navigator.clipboard.writeText(familyAppUrl); setShareStatus("Link copied!"); } catch { setShareStatus("Press and hold the link to copy it."); } };
 
   const selectedIso = iso(selectedDate);
   const weekDates = useMemo(() => Array.from({ length: 7 }, (_, index) => addDays(startOfWeek(selectedDate), index)), [selectedDate]);
@@ -628,7 +636,7 @@ export function ChoreChart() {
     {showLaunch && <section className="familyLaunch" aria-labelledby="check-in-title"><button className="launchParent" onClick={() => { setShowLaunch(false); if (isParent) setShowParentDashboard(true); else setShowPin(true); }}>🔒 Parent</button><div><span className="launchMark">✓</span><p className="eyebrow">{state.household}</p><h1 id="check-in-title">Who&apos;s checking in?</h1><p>Tap your color to start today&apos;s adventure.</p></div><div className="launchKids">{state.members.map((member) => <button key={member.id} style={{ "--kid-color": member.color } as React.CSSProperties} onClick={() => { setChildHome(member.id); setTab("kids"); setShowLaunch(false); }}><span>{member.celebrationEmoji}</span><i style={{ background: member.color }}>{member.initial}</i><strong>{member.name}</strong><small>Let&apos;s go!</small></button>)}</div><button className="launchFamily" onClick={() => { setTab("family"); setShowLaunch(false); }}>👨‍👩‍👧 See everyone together</button></section>}
     <header className="topbar">
       <button className="brand" onClick={() => setShowLaunch(true)}><span className="brandMark">✓</span><span>Tidy Team</span></button>
-      <div className="headerActions"><button className={`parentButton ${isParent ? "unlocked" : ""}`} onClick={() => isParent ? setShowParentDashboard(true) : setShowPin(true)}>{isParent ? "⚙️ Parent dashboard" : "🔒 Parent"}</button><button className="household" onClick={() => isParent ? setShowPeople(true) : setShowPin(true)} aria-label="Edit household members"><span className="avatarStack">{state.members.map((m) => <i key={m.id} style={{ background: m.color }}>{m.initial}</i>)}</span><span><strong>{state.household}</strong><small>{syncLabel} · {isParent ? "Edit" : "Locked"}</small></span></button></div>
+      <div className="headerActions"><button className="shareAppButton" onClick={() => { setShareStatus(""); setShowShare(true); }}>▦ Share app</button><button className={`parentButton ${isParent ? "unlocked" : ""}`} onClick={() => isParent ? setShowParentDashboard(true) : setShowPin(true)}>{isParent ? "⚙️ Parent dashboard" : "🔒 Parent"}</button><button className="household" onClick={() => isParent ? setShowPeople(true) : setShowPin(true)} aria-label="Edit household members"><span className="avatarStack">{state.members.map((m) => <i key={m.id} style={{ background: m.color }}>{m.initial}</i>)}</span><span><strong>{state.household}</strong><small>{syncLabel} · {isParent ? "Edit" : "Locked"}</small></span></button></div>
     </header>
 
     <section className="hero" id="top">
@@ -784,6 +792,8 @@ export function ChoreChart() {
     {proofChore && <div className="modalBackdrop" onMouseDown={(event) => event.target === event.currentTarget && setProofChore(null)}><form className="modal" action={submitPhotoProof}>
       <button type="button" className="close" onClick={() => setProofChore(null)} aria-label="Close">×</button><p className="eyebrow">Photo verification</p><h2>Show the finished job</h2><p className="modalIntro">Take or choose a photo for “{proofChore.title}.” A parent will approve the points.</p><label>Completion photo<input name="file" type="file" accept="image/*" capture="environment" required /></label>{!isParent && <p className="pinError">Unlock Parent Mode before securely uploading this photo.</p>}{proofError && <p className="pinError" role="alert">{proofError}</p>}<button className="saveButton" type="submit" disabled={!isParent}>Upload for approval</button>
     </form></div>}
+
+    {showShare && <div className="modalBackdrop" onMouseDown={(event) => event.target === event.currentTarget && setShowShare(false)}><section className="modal shareAppModal"><button type="button" className="close" onClick={() => setShowShare(false)} aria-label="Close">×</button><p className="eyebrow">Open on another device</p><h2>Scan to join Tidy Team</h2><p className="modalIntro">Point a phone or tablet camera at this code. It opens the same synchronized Petrous Family app.</p><div className="qrFrame">{qrCodeUrl ? <Image src={qrCodeUrl} alt="QR code for the Tidy Team family app" width={720} height={720} unoptimized /> : <div className="qrLoading">Building your family code…</div>}<span className="qrBrand">✓</span></div><div className="shareFamilyStrip">{state.members.map((member) => <span key={member.id} style={{ background: member.color }}>{member.initial}</span>)}</div><a className="shareUrl" href={familyAppUrl} target="_blank" rel="noreferrer">{familyAppUrl.replace("https://", "")}</a><button className="saveButton" onClick={shareFamilyApp}>📲 Share or copy link</button>{shareStatus && <p className="shareStatus" role="status">{shareStatus}</p>}<small className="shareSafety">The QR code contains only the public app address. Parent controls still require your PIN or trusted device verification.</small></section></div>}
 
     {showTemplates && isParent && <div className="modalBackdrop" onMouseDown={(event) => event.target === event.currentTarget && setShowTemplates(false)}><section className="modal templateModal"><button type="button" className="close" onClick={() => setShowTemplates(false)} aria-label="Close">×</button><p className="eyebrow">One-tap parent setup</p><h2>Routine templates</h2><p className="modalIntro">Activate a complete routine for Charli, Andy, and Henry. You can edit or remove every generated routine afterward.</p><div className="templateGrid">{routineTemplates.map((template) => <article key={template.id}><span>{template.emoji}</span><div><h3>{template.name}</h3><p>{template.detail}</p><small>{template.chores.length} routine{template.chores.length === 1 ? "" : "s"}{template.id === "rotation" ? " · rotates weekly" : " · assigned to all kids"}</small></div><button onClick={() => activateTemplate(template)}>Activate</button></article>)}</div></section></div>}
 
