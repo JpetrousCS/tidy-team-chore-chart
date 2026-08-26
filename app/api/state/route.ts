@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 import { ensureTable } from "../../../lib/db";
 import { hasFamilySession, hasParentSession } from "../../../lib/parent-auth";
+import { getKidSession } from "../../../lib/kid-auth";
 
 export const runtime = "nodejs";
 const HOUSEHOLD_ID = "default-household";
 
 export async function GET() {
-  if (!(await hasFamilySession())) return NextResponse.json({ error: "Trusted family device required" }, { status: 401 });
+  if (!(await hasFamilySession()) && !(await getKidSession())) return NextResponse.json({ error: "Family sign-in required" }, { status: 401 });
   const sql = await ensureTable();
   if (!sql) return NextResponse.json({ error: "DATABASE_URL is not configured" }, { status: 503 });
   const rows = await sql`SELECT data FROM household_state WHERE id = ${HOUSEHOLD_ID}`;
