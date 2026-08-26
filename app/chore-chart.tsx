@@ -298,23 +298,21 @@ export function ChoreChart() {
   const [showKidAccounts, setShowKidAccounts] = useState(false);
   const [kidAccountStatus, setKidAccountStatus] = useState("");
   const [rewardMath, setRewardMath] = useState<{ reward: Reward; quantity: number } | null>(null);
+  const [showChangeKidPin, setShowChangeKidPin] = useState(false);
+  const [changeKidPinStatus, setChangeKidPinStatus] = useState("");
 
   useEffect(() => {
     const load = async () => {
-      try {
-        const response = await fetch("/api/state", { cache: "no-store" });
-        if (!response.ok) throw new Error();
-        const saved = (await response.json()) as AppState | null;
-        if (saved) setState(normalizeState(saved));
-        setSyncLabel("Synced");
-      } catch {
-        const local = window.localStorage.getItem("tidy-team-state-v4");
-        if (local) setState(normalizeState(JSON.parse(local)));
-        setSyncLabel("Saved on this device");
-      }
+      const [parentResponse, kidResponse] = await Promise.all([fetch("/api/parent-pin", { cache: "no-store" }), fetch("/api/kid-auth", { cache: "no-store" })]);
+      const parentData = parentResponse.ok ? await parentResponse.json() : { authenticated: false }; const kidData = kidResponse.ok ? await kidResponse.json() : { memberId: null, configuredMemberIds: [] };
+      const parentAuthenticated = Boolean(parentData.authenticated); const memberId = kidData.memberId ?? null;
+      setIsParent(parentAuthenticated); setKidSession(memberId); setConfiguredKidIds(kidData.configuredMemberIds ?? []);
+      if (memberId) { setChildHome(memberId); setActiveMember(memberId); setTab("kids"); setShowLaunch(false); }
+      else if (parentAuthenticated) setShowLaunch(false);
+      if (parentAuthenticated || memberId) { const response = await fetch("/api/state", { cache: "no-store" }); if (response.ok) { const saved = (await response.json()) as AppState | null; if (saved) setState(normalizeState(saved)); setSyncLabel("Synced"); } }
+      else setSyncLabel("Sign in to sync");
     };
-    load();
-    fetch("/api/kid-auth", { cache: "no-store" }).then((response) => response.json()).then((data) => { setKidSession(data.memberId ?? null); setConfiguredKidIds(data.configuredMemberIds ?? []); if (data.memberId) { setChildHome(data.memberId); setActiveMember(data.memberId); setTab("kids"); setShowLaunch(false); } }).catch(() => undefined);
+    load().catch(() => setSyncLabel("Sign in to sync"));
     platformAuthenticatorIsAvailable().then(setBiometricSupported).catch(() => setBiometricSupported(false));
     fetch("/api/passkey?mode=available").then((response) => response.json()).then((data) => setPasskeyAvailable(Boolean(data.available))).catch(() => undefined);
   }, []);
@@ -372,6 +370,13 @@ export function ChoreChart() {
     const data = await response.json();
     if (!response.ok) { setKidAccountStatus(data.error || "Could not save the PIN"); return; }
     setConfiguredKidIds((ids) => Array.from(new Set([...ids, memberId]))); setKidAccountStatus("PIN saved. Existing sessions for this child were signed out.");
+  };
+  const changeOwnKidPin = async (form: FormData) => {
+    setChangeKidPinStatus(""); const pin = String(form.get("pin") || ""); const confirm = String(form.get("confirm") || "");
+    if (pin !== confirm) { setChangeKidPinStatus("The two PINs need to match."); return; }
+    const response = await fetch("/api/kid-auth", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ pin }) }); const result = await response.json();
+    if (!response.ok) { setChangeKidPinStatus(result.error || "PIN could not be changed."); return; }
+    setKidSession(null); setShowChangeKidPin(false); setShowLaunch(true); setChangeKidPinStatus("");
   };
   const shareFamilyApp = async () => { setShareStatus(""); if (navigator.share) { try { await navigator.share({ title: `${state.household} · Tidy Team`, text: "Open our family chore chart", url: familyAppUrl }); setShareStatus("Shared!"); return; } catch { /* The share sheet may be dismissed. */ } } try { await navigator.clipboard.writeText(familyAppUrl); setShareStatus("Link copied!"); } catch { setShareStatus("Press and hold the link to copy it."); } };
 
@@ -661,11 +666,11 @@ export function ChoreChart() {
       const authentication = await startAuthentication({ optionsJSON: await optionsResponse.json() });
       const verification = await fetch("/api/passkey?mode=authenticate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(authentication) });
       if (!verification.ok) throw new Error("The biometric sign-in could not be verified.");
-      setIsParent(true); setShowPin(false); setShowParentDashboard(true);
+      setIsParent(true); setShowPin(false); setShowParentDashboard(true); setShowLaunch(false); const cloud = await fetch("/api/state", { cache: "no-store" }); if (cloud.ok) { const saved = await cloud.json(); if (saved) setState(normalizeState(saved)); }
     } catch (error) { setPinError(error instanceof Error ? error.message : "Biometric sign-in was cancelled."); }
   };
 
-  const lockParent = async () => { await fetch("/api/parent-pin", { method: "DELETE" }); setIsParent(false); setShowParentDashboard(false); };
+  const lockParent = async () => { await fetch("/api/parent-pin", { method: "DELETE" }); setIsParent(false); setShowParentDashboard(false); setShowLaunch(true); };
 
   const addReward = (form: FormData) => {
     const title = String(form.get("title") || "").trim();
@@ -702,7 +707,7 @@ export function ChoreChart() {
   const speakList = (memberId: string) => { const member = state.members.find((item) => item.id === memberId); const list = state.chores.filter((chore) => (chore.memberId === memberId || chore.memberIds?.includes(memberId)) && scheduledOn(chore, selectedDate) && !isComplete(chore.id)); if (typeof speechSynthesis === "undefined") return; speechSynthesis.cancel(); speechSynthesis.speak(new SpeechSynthesisUtterance(list.length ? `${member?.name}, your next jobs are: ${list.map((chore) => chore.title).join(", ")}.` : `${member?.name}, you are all done!`)); };
 
   return <main className={`shell ${state.accessibilitySettings.highContrast ? "highContrast" : ""} ${state.accessibilitySettings.largeText ? "largeText" : ""} ${state.accessibilitySettings.reducedMotion ? "reduceMotion" : ""}`}>
-    {showLaunch && <section className="familyLaunch" aria-labelledby="check-in-title"><button className="launchParent" onClick={() => { setShowLaunch(false); if (isParent) setShowParentDashboard(true); else setShowPin(true); }}>🔒 Parent</button><div><span className="launchMark">✓</span><p className="eyebrow">{state.household}</p><h1 id="check-in-title">Who&apos;s checking in?</h1><p>Tap your color, then enter your own secret PIN.</p></div><div className="launchKids">{state.members.map((member) => <button key={member.id} style={{ "--kid-color": member.color } as React.CSSProperties} onClick={() => openKid(member)}><span>{member.celebrationEmoji}</span><i style={{ background: member.color }}>{member.initial}</i><strong>{member.name}</strong><small>{kidSession === member.id ? "Signed in · let’s go!" : configuredKidIds.includes(member.id) ? "Tap to sign in" : "Parent setup needed"}</small></button>)}</div>{!kidSession && <button className="launchFamily" onClick={() => { setTab("family"); setShowLaunch(false); }}>👨‍👩‍👧 See everyone together</button>}</section>}
+    {showLaunch && <section className="familyLaunch" aria-labelledby="check-in-title"><button className="launchParent" onClick={() => { setShowLaunch(false); if (isParent) setShowParentDashboard(true); else setShowPin(true); }}>🔒 Parent</button><div><span className="launchMark">✓</span><p className="eyebrow">{state.household}</p><h1 id="check-in-title">Who&apos;s checking in?</h1><p>Only a parent or the child who owns a profile can open its tasks.</p></div><div className="launchKids">{state.members.map((member) => <button key={member.id} style={{ "--kid-color": member.color } as React.CSSProperties} onClick={() => openKid(member)}><span>{member.celebrationEmoji}</span><i style={{ background: member.color }}>{member.initial}</i><strong>{member.name}</strong><small>{kidSession === member.id ? "Signed in · let’s go!" : configuredKidIds.includes(member.id) ? "Tap to sign in" : "Parent setup needed"}</small></button>)}</div><small className="launchPrivacy">🔐 Tasks and completion buttons stay locked until sign-in.</small></section>}
     <header className="topbar">
       <button className="brand" onClick={() => setShowLaunch(true)}><span className="brandMark">✓</span><span>Tidy Team</span></button>
       <div className="headerActions"><button className="shareAppButton" onClick={() => { setShareStatus(""); setShowShare(true); }}>▦ Share app</button>{kidSession && !isParent && <button className="kidSignOut" onClick={logoutKid}>↪ Sign out</button>}<button className={`parentButton ${isParent ? "unlocked" : ""}`} onClick={() => isParent ? setShowParentDashboard(true) : setShowPin(true)}>{isParent ? "⚙️ Parent dashboard" : "🔒 Parent"}</button><button className="household" onClick={() => isParent ? setShowPeople(true) : setShowPin(true)} aria-label="Edit household members"><span className="avatarStack">{state.members.map((m) => <i key={m.id} style={{ background: m.color }}>{m.initial}</i>)}</span><span><strong>{state.household}</strong><small>{syncLabel} · {kidSession ? `${state.members.find((m) => m.id === kidSession)?.name} signed in` : isParent ? "Edit" : "Locked"}</small></span></button></div>
@@ -779,7 +784,7 @@ export function ChoreChart() {
       : (() => { const member = state.members.find((item) => item.id === childHome) ?? state.members[0]; const pointInfo = pointsByMember.find((item) => item.id === member.id); const chores = state.chores.filter((chore) => choreBelongsTo(chore, member.id) && scheduledOn(chore, selectedDate)); const completed = chores.filter((chore) => isComplete(chore.id)).length; const goal = state.rewards.find((reward) => reward.id === member.rewardGoalId) ?? state.rewards[0]; const streak = Array.from({ length: 30 }, (_, index) => iso(addDays(new Date(), -index))).findIndex((date) => !state.completions.some((completion) => completion.date === date && state.chores.some((chore) => chore.id === completion.choreId && choreBelongsTo(chore, member.id, completion.date)))); const streakCount = streak === -1 ? 30 : streak; return <section className="kidHome" style={{ "--kid-color": member.color } as React.CSSProperties}>
         <header><div className="kidIdentity"><span style={{ background: member.color }}>{member.initial}</span><div><p className="eyebrow">{routineFocus === "morning" ? "Good morning" : routineFocus === "evening" ? "Good evening" : "Your adventure"}</p><h2>{member.name}&apos;s day</h2></div></div><div className="kidStats"><strong>⭐ {pointInfo?.points ?? 0}</strong><strong>🔥 {streakCount} day streak</strong><strong>🛡️ {state.engagementSettings.shields[member.id] ?? 0} shields</strong><strong>{member.celebrationEmoji} {member.celebrationMessage}</strong></div></header>
         <div className="kidGoal"><span>{goal?.emoji ?? "🎁"}</span><div><small>Saving for</small><strong>{goal?.title ?? "Choose a reward"}</strong><div><i style={{ width: `${goal ? Math.min(100, Math.round(((pointInfo?.points ?? 0) / goal.cost) * 100)) : 0}%` }} /></div><p>{pointInfo?.points ?? 0} of {goal?.cost ?? 0} stars</p></div><select aria-label="Choose reward goal" value={goal?.id ?? ""} onChange={(event) => setRewardGoal(member.id, event.target.value)}>{state.rewards.map((reward) => <option key={reward.id} value={reward.id}>{reward.emoji} {reward.title}</option>)}</select></div>
-        <div className="kidQuickActions"><button onClick={() => speakList(member.id)}>🔊 Read my list</button><button onClick={() => { const next = chores.find((chore) => !isComplete(chore.id)); if (next) speakChore(next); }}>👉 What&apos;s next?</button><button onClick={() => setShowRewardSuggestion(true)}>💡 Suggest a reward</button></div>
+        <div className="kidQuickActions"><button onClick={() => speakList(member.id)}>🔊 Read my list</button><button onClick={() => { const next = chores.find((chore) => !isComplete(chore.id)); if (next) speakChore(next); }}>👉 What&apos;s next?</button><button onClick={() => setShowRewardSuggestion(true)}>💡 Suggest a reward</button>{kidSession === member.id && <button onClick={() => { setChangeKidPinStatus(""); setShowChangeKidPin(true); }}>🔑 Change my PIN</button>}</div>
         <div className="kidBadges" style={{ "--badge-color": member.color } as React.CSSProperties}><strong>My badges</strong>{badgeCatalog.filter((badge) => badgeProgress(member.id, badge.kind) >= badge.target).slice(0, 4).map((badge) => <span key={badge.id}><i>{badge.emoji}</i> {badge.name}</span>)}<button onClick={() => setShowBadges(true)}>🏅 See all badges</button></div>
         <div className="kidChores">{chores.filter((chore) => roomFilter === "all" || roomFor(chore) === roomFilter).map((chore) => { const done = isComplete(chore.id); const completion = state.completions.find((item) => item.choreId === chore.id && item.date === selectedIso); const teamPartDone = completion?.participantIds?.includes(member.id); return <article className={`${done ? "done" : ""} ${chore.steps?.length ? "hasChecklist" : ""}`} key={chore.id}><button className="kidDone" onClick={() => chore.memberIds?.length && chore.teamMode === "everyone" ? confirmTeamPart(chore, member.id) : chore.cadence === "flexible" ? recordFlexible(chore) : toggle(chore.id)} aria-label={`${done ? "Undo" : "Complete"} ${chore.title}`}>{chore.memberIds?.length && chore.teamMode === "everyone" ? teamPartDone ? "✓" : "My part!" : done ? "✓" : "I’m done!"}</button><span>{chore.icon}</span><div><h3>{chore.title}</h3><p>{chore.memberIds?.length ? `${chore.roles?.[member.id] || chore.detail} · Team bonus` : chore.detail} · ⭐ +{chore.points + (chore.memberIds?.length ? chore.teamBonus ?? 5 : 0)}{chore.rotate ? " · 🔄 Your turn this week" : ""}</p>{Boolean(chore.steps?.length) && <div className="routineChecklist">{chore.steps?.map((step, index) => { const checked = completion?.stepIds?.includes(String(index)); return <button key={`${chore.id}-${index}`} className={checked ? "checked" : ""} onClick={() => toggleChecklistStep(chore, index)}><span>{checked ? "✓" : index + 1}</span>{step}</button>; })}</div>}<button className="journalButton" onClick={() => { setJournalMember(member.id); setJournalChore(chore); }}>📓 Tell what I did</button></div>{state.accessibilitySettings.spokenChores && <button className="speakChore" onClick={() => speakChore(chore)} aria-label={`Read ${chore.title} aloud`}>🔊</button>}</article>; })}{chores.length === 0 && <div className="empty"><span>🌈</span><h2>All clear!</h2><p>Nothing is scheduled right now.</p></div>}</div>
         <div className="kidProgress"><strong>{completed}/{chores.length}</strong><span>jobs finished today</span><div><i style={{ width: `${chores.length ? Math.round((completed / chores.length) * 100) : 0}%` }} /></div></div>
@@ -905,6 +910,8 @@ export function ChoreChart() {
       <label>Parent PIN<input name="pin" type="password" inputMode="numeric" pattern="[0-9]{4}" maxLength={4} autoComplete="off" autoFocus required /></label>{pinError && <p className="pinError" role="alert">{pinError}</p>}<button className="saveButton" type="submit">Unlock</button>
       {passkeyAvailable && biometricSupported && <button className="passkeyButton" type="button" onClick={unlockWithPasskey}>👆 Use thumbprint, Face ID, or device passkey</button>}
     </form></div>}
+
+    {showChangeKidPin && kidSession && <div className="modalBackdrop" onMouseDown={(event) => event.target === event.currentTarget && setShowChangeKidPin(false)}><form className="modal pinModal" action={changeOwnKidPin}><button type="button" className="close" onClick={() => setShowChangeKidPin(false)} aria-label="Close">×</button><p className="eyebrow">My private code</p><h2>Choose a new PIN</h2><p className="modalIntro">Pick four numbers you can remember. You’ll sign in again with the new PIN.</p><label>New PIN<input name="pin" type="password" inputMode="numeric" pattern="[0-9]{4}" maxLength={4} autoComplete="new-password" required /></label><label>Enter it again<input name="confirm" type="password" inputMode="numeric" pattern="[0-9]{4}" maxLength={4} autoComplete="new-password" required /></label>{changeKidPinStatus && <p className="pinError" role="alert">{changeKidPinStatus}</p>}<button className="saveButton" type="submit">Save my new PIN</button></form></div>}
 
     {celebration && <div className="celebration" aria-live="polite" style={{ "--celebrate": celebration.color } as React.CSSProperties}><div className="burst"><i>✦</i><i>★</i><span>{celebration.emoji}</span><i>✦</i><i>★</i></div><strong>{celebration.message} {celebration.name}!</strong></div>}
   </main>;
