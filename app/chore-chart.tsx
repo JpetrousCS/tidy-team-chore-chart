@@ -96,7 +96,7 @@ const starterRewards: Reward[] = [
   { id: "games-30", title: "30 minutes of video games", detail: "Bonus game time", emoji: "🎮", cost: 50 },
   { id: "putt-putt", title: "Putt-putt and ice cream", detail: "A special family outing", emoji: "⛳", cost: 250 },
   { id: "kids-empire", title: "Visit to Kids Empire", detail: "Indoor play adventure", emoji: "🏰", cost: 350 },
-  { id: "movie-choice", title: "Choose the family movie", detail: "You pick what everyone watches", emoji: "🎬", cost: 75 },
+  { id: "movie-choice", title: "Choose the family movie", detail: "You pick what everyone watches", emoji: "🎬", cost: 75, limit: "daily", limitQuantity: 1 },
   { id: "dessert-choice", title: "Choose tonight’s dessert", detail: "Pick a family treat", emoji: "🧁", cost: 90 },
   { id: "stay-up", title: "Stay up 20 minutes later", detail: "A special weekend privilege", emoji: "🌙", cost: 120 },
   { id: "family-bowling", title: "Family bowling trip", detail: "Everyone contributes to an outing", emoji: "🎳", cost: 300, scope: "family" },
