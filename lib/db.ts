@@ -48,5 +48,7 @@ export async function ensureCalendarTable() {
     color TEXT NOT NULL DEFAULT '#e76f35',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`;
+  await sql`ALTER TABLE calendar_feeds ADD COLUMN IF NOT EXISTS emoji TEXT NOT NULL DEFAULT '🗓️'`;
+  await sql`ALTER TABLE calendar_feeds ADD COLUMN IF NOT EXISTS visible BOOLEAN NOT NULL DEFAULT TRUE`;
   return sql;
 }
