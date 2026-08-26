@@ -297,6 +297,7 @@ export function ChoreChart() {
   const [configuredKidIds, setConfiguredKidIds] = useState<string[]>([]);
   const [showKidAccounts, setShowKidAccounts] = useState(false);
   const [kidAccountStatus, setKidAccountStatus] = useState("");
+  const [rewardMath, setRewardMath] = useState<{ reward: Reward; quantity: number } | null>(null);
 
   useEffect(() => {
     const load = async () => {
@@ -588,7 +589,7 @@ export function ChoreChart() {
   const updateCalendarFeed = async (form: FormData) => { setCalendarError(""); const response = await fetch("/api/calendar/settings", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: form.get("id"), name: form.get("name"), type: form.get("type"), color: form.get("color"), emoji: form.get("emoji"), visible: form.get("visible") === "on" }) }); const result = await response.json(); if (!response.ok) { setCalendarError(result.error || "Calendar could not be updated."); return; } await openCalendarSettings(); };
   const removeCalendarFeed = async (id: string) => { const response = await fetch(`/api/calendar/settings?id=${encodeURIComponent(id)}`, { method: "DELETE" }); if (response.ok) setCalendarFeeds(calendarFeeds.filter((feed) => feed.id !== id)); };
 
-  const redeemReward = (reward: Reward) => {
+  const redeemReward = async (reward: Reward, confirmed = false) => {
     const quantity = Math.max(1, rewardQuantities[reward.id] ?? 1); const totalCost = reward.cost * quantity;
     if (!rewardKid) return;
     if (reward.scope !== "family" && reward.memberIds?.length && !reward.memberIds.includes(rewardKid.id)) return;
@@ -596,8 +597,15 @@ export function ChoreChart() {
     const familyReady = !contributions || state.members.every((member) => (pointsByMember.find((item) => item.id === member.id)?.points ?? 0) >= contributions[member.id]);
     const limitOwner = reward.scope === "family" ? "family" : rewardKid.id;
     if (!familyReady || (reward.scope !== "family" && rewardKid.points < totalCost) || rewardRemaining(reward, limitOwner) < quantity) return;
+    if (!confirmed) { setRewardMath({ reward, quantity }); return; }
     const redemption: Redemption = { id: `${Date.now()}`, rewardId: reward.id, rewardTitle: reward.title, memberId: reward.scope === "family" ? "family" : rewardKid.id, cost: totalCost, quantity, contributions, redeemedAt: new Date().toISOString(), status: "pending" };
-    persist({ ...state, redemptions: [...state.redemptions, redemption] });
+    if (kidSession) {
+      setSyncLabel("Sending request…");
+      const response = await fetch("/api/kid-rewards", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ rewardId: reward.id, quantity }) }); const result = await response.json();
+      if (!response.ok) { setSyncLabel(result.error || "Request could not be sent"); return; }
+      setState(normalizeState(result)); setSyncLabel("Synced");
+    } else await persist({ ...state, redemptions: [...state.redemptions, redemption] });
+    setRewardMath(null);
     setCelebration({ emoji: reward.emoji, color: rewardKid.color, name: rewardKid.name, message: "Reward request sent for" });
     window.setTimeout(() => setCelebration(null), 1800);
   };
@@ -885,6 +893,8 @@ export function ChoreChart() {
     </form></div>}
 
     {journalChore && <div className="modalBackdrop" onMouseDown={(event) => event.target === event.currentTarget && setJournalChore(null)}><form className="modal journalModal" action={submitJournal}><button type="button" className="close" onClick={() => setJournalChore(null)} aria-label="Close">×</button><p className="eyebrow">My proud moment</p><h2>{journalChore.icon} {journalChore.title}</h2><p className="modalIntro">Tell your family what you did. A note is enough—photos and voice memos are always optional.</p><label>My note<input id="journal-note" name="note" placeholder="I was proud because…" maxLength={500} /></label><button className="dictateButton" type="button" onClick={dictateNote}>🎙️ Say my note</button><div className="journalMediaChoices"><label>📷 Optional progress photo<input name="photo" type="file" accept="image/*" capture="environment" /></label><label>🎙️ Optional voice memo<input name="audio" type="file" accept="audio/*" capture="user" /></label></div><p className="fieldHint">Choose either a photo or voice memo. Private media is stored only from a trusted family device and appears in the Parent Dashboard.</p>{journalError && <p className="pinError" role="alert">{journalError}</p>}<button className="saveButton" type="submit">Save my proud moment</button></form></div>}
+
+    {rewardMath && rewardKid && (() => { const total = rewardMath.reward.cost * rewardMath.quantity; const shares = Object.fromEntries(state.members.map((member, index) => [member.id, Math.floor(total / state.members.length) + (index < total % state.members.length ? 1 : 0)])); return <div className="modalBackdrop" onMouseDown={(event) => event.target === event.currentTarget && setRewardMath(null)}><section className="modal rewardMathModal"><button type="button" className="close" onClick={() => setRewardMath(null)} aria-label="Close">×</button><p className="eyebrow">Star math</p><h2>{rewardMath.reward.emoji} Ready to request?</h2><p className="modalIntro">Stars are deducted only after a parent approves the reward.</p>{rewardMath.reward.scope === "family" ? <div className="familyMath">{state.members.map((member) => { const balance = pointsByMember.find((item) => item.id === member.id)?.points ?? 0; return <article key={member.id} style={{ "--math-color": member.color } as React.CSSProperties}><span style={{ background: member.color }}>{member.initial}</span><strong>{member.name}</strong><div><b>⭐ {balance}</b><i>−</i><b>⭐ {shares[member.id]}</b><i>=</i><em>⭐ {balance - shares[member.id]}</em></div><small>current − family share = after approval</small></article>; })}</div> : <div className="visualMath" style={{ "--math-color": rewardKid.color } as React.CSSProperties}><div><small>{rewardKid.name} has</small><strong>⭐ {rewardKid.points}</strong></div><span>−</span><div><small>{rewardMath.quantity} × ⭐ {rewardMath.reward.cost}</small><strong>⭐ {total}</strong></div><span>=</span><div className="mathAnswer"><small>After approval</small><strong>⭐ {rewardKid.points - total}</strong></div></div>}<div className="rewardMathSummary"><span>{rewardMath.quantity} × {rewardMath.reward.title}</span><strong>Total: ⭐ {total}</strong></div><button className="saveButton" onClick={() => redeemReward(rewardMath.reward, true)}>Send to Parent Dashboard</button></section></div>; })()}
 
     {kidLoginMember && <div className="modalBackdrop" onMouseDown={(event) => event.target === event.currentTarget && setKidLoginMember(null)}><form className="modal pinModal kidLoginModal" action={loginKid} style={{ "--kid-color": kidLoginMember.color } as React.CSSProperties}><button type="button" className="close" onClick={() => setKidLoginMember(null)} aria-label="Close">×</button><span className="kidLoginAvatar" style={{ background: kidLoginMember.color }}>{kidLoginMember.initial}</span><p className="eyebrow">{kidLoginMember.celebrationEmoji} My Tidy Team</p><h2>Hi, {kidLoginMember.name}!</h2><p className="modalIntro">Enter your four-number secret code. This device will remember you until you sign out.</p><label>My PIN<input name="pin" type="password" inputMode="numeric" pattern="[0-9]{4}" maxLength={4} autoComplete="off" autoFocus required /></label>{kidLoginError && <p className="pinError" role="alert">{kidLoginError}</p>}<button className="saveButton" type="submit" style={{ background: kidLoginMember.color }}>Open my chores</button></form></div>}
 
