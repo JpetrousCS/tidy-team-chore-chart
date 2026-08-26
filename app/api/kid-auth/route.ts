@@ -49,6 +49,18 @@ export async function PUT(request: Request) {
   return NextResponse.json({ ok: true });
 }
 
+export async function PATCH(request: Request) {
+  const memberId = await getKidSession();
+  if (!memberId) return NextResponse.json({ error: "Child sign-in required" }, { status: 401 });
+  const { pin } = await request.json();
+  if (!validPin(pin)) return NextResponse.json({ error: "Use exactly four numbers" }, { status: 400 });
+  const sql = await ensureAuthTables();
+  if (!sql) return NextResponse.json({ error: "DATABASE_URL is not configured" }, { status: 503 });
+  await sql`UPDATE kid_accounts SET pin_hash = ${hashKidPin(pin)}, updated_at = NOW() WHERE member_id = ${memberId}`;
+  await clearKidSession();
+  return NextResponse.json({ ok: true });
+}
+
 export async function DELETE() {
   await clearKidSession();
   return NextResponse.json({ ok: true });
