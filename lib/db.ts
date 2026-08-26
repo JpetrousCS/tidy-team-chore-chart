@@ -34,6 +34,17 @@ export async function ensureAuthTables() {
     challenge TEXT NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`;
+  await sql`CREATE TABLE IF NOT EXISTS kid_accounts (
+    member_id TEXT PRIMARY KEY,
+    pin_hash TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`;
+  await sql`CREATE TABLE IF NOT EXISTS kid_sessions (
+    token_hash TEXT PRIMARY KEY,
+    member_id TEXT NOT NULL REFERENCES kid_accounts(member_id) ON DELETE CASCADE,
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`;
   return sql;
 }
 
