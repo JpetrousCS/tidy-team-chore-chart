@@ -11,7 +11,7 @@ type Room = "bedroom" | "bathroom" | "kitchen" | "playroom" | "outside" | "famil
 type Chore = { id: string; title: string; detail: string; icon: string; points: number; teamBonus?: number; teamMode?: "one" | "everyone"; roles?: Record<string, string>; verification?: Verification; memberId: string; memberIds?: string[]; cadence: Cadence; routine?: Routine; startTime?: string; endTime?: string; area?: Room; beforeAfter?: boolean; dueDay?: number; dueDate?: number; weeklyGoal?: number };
 type Completion = { id?: string; choreId: string; date: string; status?: "pending" | "approved"; proofPath?: string; participantIds?: string[] };
 type RewardLimit = "unlimited" | "daily" | "weekly" | "monthly";
-type Reward = { id: string; title: string; detail: string; emoji: string; cost: number; scope?: "individual" | "family"; limit?: RewardLimit; limitQuantity?: number };
+type Reward = { id: string; title: string; detail: string; emoji: string; cost: number; scope?: "individual" | "family"; memberIds?: string[]; limit?: RewardLimit; limitQuantity?: number };
 type Redemption = { id: string; rewardId: string; rewardTitle: string; memberId: string; cost: number; quantity?: number; contributions?: Record<string, number>; redeemedAt: string; status?: "pending" | "approved" };
 type PointAdjustment = { id: string; memberId: string; amount: number; note: string; createdAt: string };
 type PointPolicy = { reset: "never" | "weekly" | "monthly"; dailyEarnLimit: number; maxBalance: number };
@@ -33,6 +33,28 @@ const celebrationChoices = [
   { emoji: "🦖", name: "Dinosaur" }, { emoji: "⚽", name: "Soccer ball" }, { emoji: "🐉", name: "Dragon" },
   { emoji: "🎉", name: "Party popper" }, { emoji: "🏆", name: "Trophy" }, { emoji: "⭐", name: "Superstar" },
 ];
+const rewardEmojiChoices = [
+  { emoji: "🎁", name: "Surprise gift" }, { emoji: "📱", name: "Tablet or screen time" }, { emoji: "🎮", name: "Video game time" }, { emoji: "🎬", name: "Movie night" },
+  { emoji: "🍦", name: "Ice cream or sweet treat" }, { emoji: "🍕", name: "Pizza or favorite meal" }, { emoji: "🍿", name: "Snack or movie treat" }, { emoji: "🧁", name: "Dessert or baking" },
+  { emoji: "⛳", name: "Putt-putt or sports outing" }, { emoji: "🏰", name: "Kids Empire or play place" }, { emoji: "🛝", name: "Playground adventure" }, { emoji: "🎳", name: "Bowling outing" },
+  { emoji: "🎨", name: "Art or craft activity" }, { emoji: "📚", name: "Book or reading reward" }, { emoji: "🧸", name: "Toy or small prize" }, { emoji: "🧩", name: "Puzzle or game" },
+  { emoji: "🚲", name: "Bike ride" }, { emoji: "🏊", name: "Swimming activity" }, { emoji: "🎪", name: "Special family outing" }, { emoji: "🚀", name: "Big adventure" },
+  { emoji: "⭐", name: "Generic star reward" }, { emoji: "👑", name: "Special choice or privilege" }, { emoji: "🎉", name: "Celebration" }, { emoji: "💛", name: "Kindness experience" },
+];
+const badgeCatalog = [
+  { id: "starter", emoji: "🌟", name: "Super Starter", detail: "Complete 5 chores", target: 5, kind: "count" },
+  { id: "momentum", emoji: "⚡", name: "Momentum Maker", detail: "Complete 20 chores", target: 20, kind: "count" },
+  { id: "legend", emoji: "🏆", name: "Tidy Team Legend", detail: "Complete 50 chores", target: 50, kind: "count" },
+  { id: "kind", emoji: "💛", name: "Secret Kindness Agent", detail: "Complete 5 kindness missions", target: 5, kind: "kind" },
+  { id: "team", emoji: "🤝", name: "Together We Shine", detail: "Join 3 team chores", target: 3, kind: "team" },
+  { id: "room", emoji: "🧭", name: "Room Rescue Ranger", detail: "Finish 5 bedroom jobs", target: 5, kind: "room" },
+  { id: "morning", emoji: "🌞", name: "Sunrise Superstar", detail: "Finish 7 morning jobs", target: 7, kind: "morning" },
+  { id: "evening", emoji: "🌙", name: "Moonlight Routine Master", detail: "Finish 7 evening jobs", target: 7, kind: "evening" },
+  { id: "reading", emoji: "📚", name: "Story Trailblazer", detail: "Complete 5 reading tasks", target: 5, kind: "reading" },
+  { id: "helper", emoji: "🛠️", name: "Project Sidekick", detail: "Help with 3 projects", target: 3, kind: "project" },
+  { id: "journal", emoji: "📸", name: "Proud Moment Collector", detail: "Share 3 journal moments", target: 3, kind: "journal" },
+  { id: "saving", emoji: "🐉", name: "Star Hoard Guardian", detail: "Save 250 stars", target: 250, kind: "points" },
+] as const;
 const themeColors = [
   { value: "#b85dc7", name: "Berry pink" }, { value: "#dc6f9f", name: "Rose pink" },
   { value: "#e76f35", name: "Tangerine" }, { value: "#d9a62e", name: "Sunshine gold" },
@@ -59,6 +81,11 @@ const starterRewards: Reward[] = [
   { id: "games-30", title: "30 minutes of video games", detail: "Bonus game time", emoji: "🎮", cost: 50 },
   { id: "putt-putt", title: "Putt-putt and ice cream", detail: "A special family outing", emoji: "⛳", cost: 250 },
   { id: "kids-empire", title: "Visit to Kids Empire", detail: "Indoor play adventure", emoji: "🏰", cost: 350 },
+  { id: "movie-choice", title: "Choose the family movie", detail: "You pick what everyone watches", emoji: "🎬", cost: 75 },
+  { id: "dessert-choice", title: "Choose tonight’s dessert", detail: "Pick a family treat", emoji: "🧁", cost: 90 },
+  { id: "stay-up", title: "Stay up 20 minutes later", detail: "A special weekend privilege", emoji: "🌙", cost: 120 },
+  { id: "family-bowling", title: "Family bowling trip", detail: "Everyone contributes to an outing", emoji: "🎳", cost: 300, scope: "family" },
+  { id: "craft-kit", title: "Choose a craft kit", detail: "A creative project to take home", emoji: "🎨", cost: 175 },
 ];
 const coreChores = [
   { slug: "teeth", title: "Brush your teeth", detail: "Morning & bedtime", icon: "🪥", points: 5, routine: "morning" as Routine },
@@ -68,6 +95,11 @@ const coreChores = [
   { slug: "bath", title: "Take a shower or bath", detail: "Get squeaky clean", icon: "🛁", points: 10, routine: "evening" as Routine },
   { slug: "room", title: "Clean your room", detail: "Put things back where they belong", icon: "🧹", points: 15, routine: "evening" as Routine },
   { slug: "dad-project", title: "Help Dad with a project", detail: "Family teamwork", icon: "🛠️", points: 15, routine: "anytime" as Routine },
+  { slug: "dressed", title: "Get dressed", detail: "Choose clean clothes and get ready", icon: "👕", points: 5, routine: "morning" as Routine },
+  { slug: "hair", title: "Brush or style your hair", detail: "Get ready for the day", icon: "🪮", points: 5, routine: "morning" as Routine },
+  { slug: "hygiene", title: "Personal hygiene check", detail: "Wash face, use deodorant when appropriate, and feel fresh", icon: "🫧", points: 7, routine: "morning" as Routine },
+  { slug: "pajamas", title: "Put on pajamas", detail: "Get cozy and put daytime clothes away", icon: "🌙", points: 5, routine: "evening" as Routine },
+  { slug: "pickup", title: "Pick up after yourself", detail: "Return personal items to their homes", icon: "🧺", points: 8, routine: "evening" as Routine },
 ] as const;
 const suggestedChores: SuggestedChore[] = [
   { title: "Empty your lunchbox", detail: "Put containers away and bring dishes to the kitchen", icon: "🥪", points: 8, cadence: "daily", routine: "afternoon", area: "kitchen" },
@@ -146,6 +178,11 @@ function normalizeState(saved: AppState): AppState {
     if (value.includes("shower") || value.includes("bath")) return "bath";
     if (value.includes("clean your room")) return "room";
     if (value.includes("help dad") && value.includes("project")) return "dad-project";
+    if (value === "get dressed") return "dressed";
+    if (value.includes("brush or style") && value.includes("hair")) return "hair";
+    if (value.includes("personal hygiene check")) return "hygiene";
+    if (value.includes("put on pajamas")) return "pajamas";
+    if (value.includes("pick up after yourself")) return "pickup";
     return null;
   };
   const replacedIds = new Map<string, string>();
@@ -160,7 +197,8 @@ function normalizeState(saved: AppState): AppState {
   const notificationSettings = Object.assign({ enabled: false, evening: true, rewards: true, calendar: true, quietStart: "20:00", quietEnd: "07:00", memberIds: members.map((member) => member.id) }, saved.notificationSettings ?? {}) as NotificationSettings;
   const accessibilitySettings = Object.assign({ highContrast: false, largeText: false, reducedMotion: false, sounds: false, spokenChores: false }, saved.accessibilitySettings ?? {}) as AccessibilitySettings;
   const engagementSettings = Object.assign({ mysteryEnabled: true, mysteryChance: 12, questEnabled: true, questTarget: 500, questReward: "Family pizza night", mode: "normal", shields: Object.fromEntries(members.map((member) => [member.id, 2])), photoRetentionDays: 30, weatherZip: "48064" }, saved.engagementSettings ?? {}) as EngagementSettings;
-  return { ...saved, members, chores: chores.map((chore) => chore.memberIds?.length ? { ...chore, teamBonus: chore.teamBonus ?? 5, teamMode: chore.teamMode ?? "one" } : chore), completions, rewards: (saved.rewards ?? starterRewards).map((reward) => ({ ...reward, scope: reward.scope ?? "individual", limit: reward.limit ?? "unlimited", limitQuantity: reward.limitQuantity ?? 1 })), redemptions: saved.redemptions ?? [], adjustments: saved.adjustments ?? [], rewardSuggestions: saved.rewardSuggestions ?? [], journalEntries: saved.journalEntries ?? [], removedDefaultChoreIds, pointPolicy: saved.pointPolicy ?? { reset: "never", dailyEarnLimit: 0, maxBalance: 0 }, notificationSettings, accessibilitySettings, engagementSettings };
+  const rewards = [...(saved.rewards ?? [])]; for (const example of starterRewards) if (!rewards.some((reward) => reward.id === example.id)) rewards.push(example);
+  return { ...saved, members, chores: chores.map((chore) => chore.memberIds?.length ? { ...chore, teamBonus: chore.teamBonus ?? 5, teamMode: chore.teamMode ?? "one" } : chore), completions, rewards: rewards.map((reward) => ({ ...reward, scope: reward.scope ?? "individual", memberIds: reward.memberIds ?? members.map((member) => member.id), limit: reward.limit ?? "unlimited", limitQuantity: reward.limitQuantity ?? 1 })), redemptions: saved.redemptions ?? [], adjustments: saved.adjustments ?? [], rewardSuggestions: saved.rewardSuggestions ?? [], journalEntries: saved.journalEntries ?? [], removedDefaultChoreIds, pointPolicy: saved.pointPolicy ?? { reset: "never", dailyEarnLimit: 0, maxBalance: 0 }, notificationSettings, accessibilitySettings, engagementSettings };
 }
 
 const iso = (date = new Date()) => date.toISOString().slice(0, 10);
@@ -216,6 +254,7 @@ export function ChoreChart() {
   const [journalChore, setJournalChore] = useState<Chore | null>(null);
   const [journalMember, setJournalMember] = useState("charli");
   const [journalError, setJournalError] = useState("");
+  const [showBadges, setShowBadges] = useState(false);
 
   useEffect(() => {
     const load = async () => {
@@ -366,6 +405,7 @@ export function ChoreChart() {
     return { ...member, earned, adjusted, spent, points: state.pointPolicy.maxBalance > 0 ? Math.min(available, state.pointPolicy.maxBalance) : available };
   }).sort((a, b) => b.points - a.points);
   const rewardKid = pointsByMember.find((member) => member.id === rewardMember) ?? pointsByMember[0];
+  const badgeProgress = (memberId: string, kind: typeof badgeCatalog[number]["kind"]) => { const memberCompletions = state.completions.filter((item) => item.status !== "pending" && state.chores.some((chore) => chore.id === item.choreId && (chore.memberId === memberId || chore.memberIds?.includes(memberId)))); const matching = (test: (chore: Chore) => boolean) => memberCompletions.filter((item) => { const chore = state.chores.find((entry) => entry.id === item.choreId); return Boolean(chore && test(chore)); }).length; if (kind === "count") return memberCompletions.length; if (kind === "kind") return matching((chore) => /kind|helpful|compliment/i.test(chore.title)); if (kind === "team") return matching((chore) => Boolean(chore.memberIds?.length)); if (kind === "room") return matching((chore) => roomFor(chore) === "bedroom"); if (kind === "morning") return matching((chore) => chore.routine === "morning"); if (kind === "evening") return matching((chore) => chore.routine === "evening"); if (kind === "reading") return matching((chore) => /read|book/i.test(chore.title)); if (kind === "project") return matching((chore) => /project|prepare|build/i.test(chore.title)); if (kind === "journal") return state.journalEntries.filter((entry) => entry.memberId === memberId).length; return pointsByMember.find((member) => member.id === memberId)?.points ?? 0; };
   const activityLedger = [
     ...state.completions.map((item) => { const chore = state.chores.find((entry) => entry.id === item.choreId); const members = state.members.filter((member) => chore && (chore.memberId === member.id || chore.memberIds?.includes(member.id))).map((member) => member.name).join(", "); return { id: `completion-${item.id || item.choreId + item.date}`, date: item.date, text: `${members || "Someone"} ${item.status === "pending" ? "submitted" : "completed"} ${chore?.title || "a chore"}`, kind: item.status === "pending" ? "⏳" : "✓" }; }),
     ...state.redemptions.map((item) => ({ id: `redemption-${item.id}`, date: item.redeemedAt.slice(0, 10), text: `${state.members.find((member) => member.id === item.memberId)?.name || "A child"} ${item.status === "pending" ? "requested" : "redeemed"} ${item.rewardTitle} for ${item.cost} stars`, kind: item.status === "pending" ? "⏳" : "🎁" })),
@@ -439,6 +479,7 @@ export function ChoreChart() {
   const redeemReward = (reward: Reward) => {
     const quantity = Math.max(1, rewardQuantities[reward.id] ?? 1); const totalCost = reward.cost * quantity;
     if (!rewardKid) return;
+    if (reward.scope !== "family" && reward.memberIds?.length && !reward.memberIds.includes(rewardKid.id)) return;
     const contributions = reward.scope === "family" ? Object.fromEntries(state.members.map((member, index) => [member.id, Math.floor(totalCost / state.members.length) + (index < totalCost % state.members.length ? 1 : 0)])) : undefined;
     const familyReady = !contributions || state.members.every((member) => (pointsByMember.find((item) => item.id === member.id)?.points ?? 0) >= contributions[member.id]);
     const limitOwner = reward.scope === "family" ? "family" : rewardKid.id;
@@ -457,6 +498,7 @@ export function ChoreChart() {
   };
 
   function rewardRemaining(reward: Reward, memberId: string) {
+    if (reward.scope !== "family" && reward.memberIds?.length && !reward.memberIds.includes(memberId)) return 0;
     if (!reward.limit || reward.limit === "unlimited") return 999;
     const now = new Date(); const start = reward.limit === "daily" ? iso(now) : reward.limit === "weekly" ? iso(startOfWeek(now)) : iso(new Date(now.getFullYear(), now.getMonth(), 1));
     const used = state.redemptions.filter((item) => item.rewardId === reward.id && item.memberId === memberId && item.redeemedAt.slice(0, 10) >= start).reduce((sum, item) => sum + (item.quantity ?? 1), 0);
@@ -508,7 +550,7 @@ export function ChoreChart() {
   const addReward = (form: FormData) => {
     const title = String(form.get("title") || "").trim();
     if (!title) return;
-    const reward: Reward = { id: editingReward?.id ?? `${Date.now()}`, title, detail: String(form.get("detail") || "A custom family reward").trim(), emoji: String(form.get("emoji") || "🎁"), cost: Math.max(1, Number(form.get("cost")) || 25), scope: String(form.get("scope") || "individual") as Reward["scope"], limit: String(form.get("limit") || "unlimited") as RewardLimit, limitQuantity: Math.max(1, Number(form.get("limitQuantity")) || 1) };
+    const reward: Reward = { id: editingReward?.id ?? `${Date.now()}`, title, detail: String(form.get("detail") || "A custom family reward").trim(), emoji: String(form.get("emoji") || "🎁"), cost: Math.max(1, Number(form.get("cost")) || 25), scope: String(form.get("scope") || "individual") as Reward["scope"], memberIds: state.members.filter((member) => form.get(`reward-member-${member.id}`) === "on").map((member) => member.id), limit: String(form.get("limit") || "unlimited") as RewardLimit, limitQuantity: Math.max(1, Number(form.get("limitQuantity")) || 1) };
     persist({ ...state, rewards: editingReward ? state.rewards.map((item) => item.id === reward.id ? reward : item) : [...state.rewards, reward] });
     setEditingReward(null); setShowRewardEditor(false);
   };
@@ -613,7 +655,7 @@ export function ChoreChart() {
         <header><div className="kidIdentity"><span style={{ background: member.color }}>{member.initial}</span><div><p className="eyebrow">{routineFocus === "morning" ? "Good morning" : routineFocus === "evening" ? "Good evening" : "Your adventure"}</p><h2>{member.name}&apos;s day</h2></div></div><div className="kidStats"><strong>⭐ {pointInfo?.points ?? 0}</strong><strong>🔥 {streakCount} day streak</strong><strong>🛡️ {state.engagementSettings.shields[member.id] ?? 0} shields</strong><strong>{member.celebrationEmoji} {member.celebrationMessage}</strong></div></header>
         <div className="kidGoal"><span>{goal?.emoji ?? "🎁"}</span><div><small>Saving for</small><strong>{goal?.title ?? "Choose a reward"}</strong><div><i style={{ width: `${goal ? Math.min(100, Math.round(((pointInfo?.points ?? 0) / goal.cost) * 100)) : 0}%` }} /></div><p>{pointInfo?.points ?? 0} of {goal?.cost ?? 0} stars</p></div><select aria-label="Choose reward goal" value={goal?.id ?? ""} onChange={(event) => setRewardGoal(member.id, event.target.value)}>{state.rewards.map((reward) => <option key={reward.id} value={reward.id}>{reward.emoji} {reward.title}</option>)}</select></div>
         <div className="kidQuickActions"><button onClick={() => speakList(member.id)}>🔊 Read my list</button><button onClick={() => { const next = chores.find((chore) => !isComplete(chore.id)); if (next) speakChore(next); }}>👉 What&apos;s next?</button><button onClick={() => setShowRewardSuggestion(true)}>💡 Suggest a reward</button></div>
-        <div className="kidBadges"><strong>My badges</strong>{state.completions.filter((item) => state.chores.some((chore) => chore.id === item.choreId && (chore.memberId === member.id || chore.memberIds?.includes(member.id)))).length >= 5 && <span>🌟 Super Starter</span>}{state.completions.some((item) => state.chores.find((chore) => chore.id === item.choreId)?.memberIds?.includes(member.id)) && <span>🤝 Team Player</span>}{state.completions.some((item) => /kind/i.test(state.chores.find((chore) => chore.id === item.choreId)?.title || "")) && <span>💛 Kindness Hero</span>}<span>🧭 Clean Room Explorer</span></div>
+        <div className="kidBadges"><strong>My badges</strong>{badgeCatalog.filter((badge) => badgeProgress(member.id, badge.kind) >= badge.target).slice(0, 4).map((badge) => <span key={badge.id}>{badge.emoji} {badge.name}</span>)}<button onClick={() => setShowBadges(true)}>🏅 See all badges</button></div>
         <div className="kidChores">{chores.filter((chore) => roomFilter === "all" || roomFor(chore) === roomFilter).map((chore) => { const done = isComplete(chore.id); const teamPartDone = state.completions.find((item) => item.choreId === chore.id && item.date === selectedIso)?.participantIds?.includes(member.id); return <article className={done ? "done" : ""} key={chore.id}><button className="kidDone" onClick={() => chore.memberIds?.length && chore.teamMode === "everyone" ? confirmTeamPart(chore, member.id) : chore.cadence === "flexible" ? recordFlexible(chore) : toggle(chore.id)} aria-label={`${done ? "Undo" : "Complete"} ${chore.title}`}>{chore.memberIds?.length && chore.teamMode === "everyone" ? teamPartDone ? "✓" : "My part!" : done ? "✓" : "I’m done!"}</button><span>{chore.icon}</span><div><h3>{chore.title}</h3><p>{chore.memberIds?.length ? `${chore.roles?.[member.id] || chore.detail} · Team bonus` : chore.detail} · ⭐ +{chore.points + (chore.memberIds?.length ? chore.teamBonus ?? 5 : 0)}</p><button className="journalButton" onClick={() => { setJournalMember(member.id); setJournalChore(chore); }}>📓 Tell what I did</button></div>{state.accessibilitySettings.spokenChores && <button className="speakChore" onClick={() => speakChore(chore)} aria-label={`Read ${chore.title} aloud`}>🔊</button>}</article>; })}{chores.length === 0 && <div className="empty"><span>🌈</span><h2>All clear!</h2><p>Nothing is scheduled right now.</p></div>}</div>
         <div className="kidProgress"><strong>{completed}/{chores.length}</strong><span>jobs finished today</span><div><i style={{ width: `${chores.length ? Math.round((completed / chores.length) * 100) : 0}%` }} /></div></div>
       </section>; })()}
@@ -682,7 +724,9 @@ export function ChoreChart() {
 
     {showFunSettings && isParent && <div className="modalBackdrop" onMouseDown={(event) => event.target === event.currentTarget && setShowFunSettings(false)}><form className="modal" action={saveFunSettings}><button type="button" className="close" onClick={() => setShowFunSettings(false)} aria-label="Close">×</button><p className="eyebrow">Parent controls</p><h2>Fun & family modes</h2><fieldset className="personEditor"><legend>🌤️ Family weather</legend><label>Home ZIP code<input name="weatherZip" inputMode="numeric" pattern="[0-9]{5}" maxLength={5} defaultValue={state.engagementSettings.weatherZip} /></label><p className="fieldHint">Used only to request your local weather. The five-digit ZIP can be changed here anytime.</p></fieldset><fieldset className="personEditor"><legend>🎁 Surprise moments</legend><label className="toggleField"><input name="mysteryEnabled" type="checkbox" defaultChecked={state.engagementSettings.mysteryEnabled} /> Enable occasional mystery rewards</label><label>Chance after an approved routine chore<input name="mysteryChance" type="number" min="0" max="100" defaultValue={state.engagementSettings.mysteryChance} /></label><p className="fieldHint">A small percentage keeps surprises special. Set to 0 or switch it off anytime.</p></fieldset><fieldset className="personEditor"><legend>🗺️ Weekly family quest</legend><label className="toggleField"><input name="questEnabled" type="checkbox" defaultChecked={state.engagementSettings.questEnabled} /> Show the shared quest</label><div className="formRow"><label>Family-star goal<input name="questTarget" type="number" min="1" defaultValue={state.engagementSettings.questTarget} /></label><label>Celebration reward<input name="questReward" defaultValue={state.engagementSettings.questReward} /></label></div></fieldset><fieldset className="personEditor"><legend>🛡️ Gentle streaks</legend><div className="teamRoles">{state.members.map((member) => <label key={member.id}>{member.name}&apos;s shields<input name={`shield-${member.id}`} type="number" min="0" max="20" defaultValue={state.engagementSettings.shields[member.id] ?? 0} /></label>)}</div></fieldset><fieldset className="personEditor"><legend>🧳 Family mode</legend><label>Current schedule<select name="mode" defaultValue={state.engagementSettings.mode}><option value="normal">Normal routine</option><option value="vacation">Vacation — protect streaks</option><option value="visit">Kid visit — show travel rhythm</option></select></label><label>Private photos delete after<input name="photoRetentionDays" type="number" min="1" max="365" defaultValue={state.engagementSettings.photoRetentionDays} /></label><p className="fieldHint">Days to keep before-and-after or proof photos. Photos remain parent-protected.</p></fieldset><button className="saveButton" type="submit">Save fun settings</button></form></div>}
 
-    {showRewardSuggestion && <div className="modalBackdrop" onMouseDown={(event) => event.target === event.currentTarget && setShowRewardSuggestion(false)}><form className="modal pinModal" action={suggestReward}><button type="button" className="close" onClick={() => setShowRewardSuggestion(false)} aria-label="Close">×</button><p className="eyebrow">Dream it up</p><h2>Suggest a reward</h2><p className="modalIntro">Your idea goes to the Parent Dashboard. A parent chooses the star cost.</p><label>Reward idea<input name="title" placeholder="A fun family activity" maxLength={60} required /></label><label>Emoji<select name="emoji" defaultValue="🎁"><option>🎁</option><option>🍦</option><option>🎬</option><option>🎮</option><option>🛝</option><option>🍕</option><option>🎨</option><option>🏰</option></select></label><button className="saveButton" type="submit">Send my idea</button></form></div>}
+    {showRewardSuggestion && <div className="modalBackdrop" onMouseDown={(event) => event.target === event.currentTarget && setShowRewardSuggestion(false)}><form className="modal pinModal" action={suggestReward}><button type="button" className="close" onClick={() => setShowRewardSuggestion(false)} aria-label="Close">×</button><p className="eyebrow">Dream it up</p><h2>Suggest a reward</h2><p className="modalIntro">Your idea goes to the Parent Dashboard. A parent chooses the star cost.</p><label>Reward idea<input name="title" placeholder="A fun family activity" maxLength={60} required /></label><label>Reward symbol<select name="emoji" defaultValue="🎁">{rewardEmojiChoices.map((choice) => <option key={choice.emoji} value={choice.emoji}>{choice.emoji} {choice.name}</option>)}</select></label><button className="saveButton" type="submit">Send my idea</button></form></div>}
+
+    {showBadges && (() => { const member = state.members.find((item) => item.id === childHome) ?? state.members[0]; const unlocked = badgeCatalog.filter((badge) => badgeProgress(member.id, badge.kind) >= badge.target).length; return <div className="modalBackdrop" onMouseDown={(event) => event.target === event.currentTarget && setShowBadges(false)}><section className="modal badgeCabinet"><button type="button" className="close" onClick={() => setShowBadges(false)} aria-label="Close">×</button><p className="eyebrow">Keep exploring</p><h2>{member.name}&apos;s Badge Cabinet</h2><p className="modalIntro">{unlocked} of {badgeCatalog.length} badges unlocked. Every badge celebrates personal growth—there is no sibling ranking.</p><div className="badgeGrid">{badgeCatalog.map((badge) => { const progress = badgeProgress(member.id, badge.kind); const earned = progress >= badge.target; return <article key={badge.id} className={earned ? "earned" : "locked"}><span>{earned ? badge.emoji : "🔒"}</span><div><h3>{badge.name}</h3><p>{badge.detail}</p><div><i style={{ width: `${Math.min(100, Math.round(progress / badge.target * 100))}%` }} /></div><small>{Math.min(progress, badge.target)} of {badge.target}</small></div></article>; })}</div></section></div>; })()}
 
     {showCalendarSettings && isParent && <div className="modalBackdrop" onMouseDown={(event) => event.target === event.currentTarget && setShowCalendarSettings(false)}><form className="modal calendarSettings" action={addCalendarFeed}>
       <button type="button" className="close" onClick={() => setShowCalendarSettings(false)} aria-label="Close">×</button><p className="eyebrow">Private family schedule</p><h2>Connect calendars</h2><p className="modalIntro">Paste a private iCal/ICS subscription link from Google Calendar, Apple Calendar, or Outlook. Links stay on the protected server and are never sent to the public page.</p>
@@ -705,8 +749,9 @@ export function ChoreChart() {
       <button type="button" className="close" onClick={() => { setEditingReward(null); setShowRewardEditor(false); }} aria-label="Close">×</button><p className="eyebrow">Make it your own</p><h2>{editingReward ? "Edit reward" : "Add a reward"}</h2>
       <label>Reward name<input name="title" placeholder="e.g. Pick Friday's movie" defaultValue={editingReward?.title ?? ""} autoFocus required /></label>
       <label>What they earn<input name="detail" placeholder="A short description" defaultValue={editingReward?.detail ?? ""} /></label>
-      <div className="formRow"><label>Emoji<select name="emoji" defaultValue={editingReward?.emoji ?? "🎁"}><option>🎁</option><option>📱</option><option>🎮</option><option>🍦</option><option>⛳</option><option>🏰</option><option>🎬</option><option>🍕</option><option>🛝</option><option>⭐</option></select></label><label>Star cost<input name="cost" type="number" min="1" max="10000" defaultValue={editingReward?.cost ?? 100} /></label></div>
+      <div className="formRow"><label>Reward symbol<select name="emoji" defaultValue={editingReward?.emoji ?? "🎁"}>{rewardEmojiChoices.map((choice) => <option key={choice.emoji} value={choice.emoji}>{choice.emoji} {choice.name}</option>)}</select></label><label>Star cost<input name="cost" type="number" min="1" max="10000" defaultValue={editingReward?.cost ?? 100} /></label></div>
       <label>Who contributes?<select name="scope" defaultValue={editingReward?.scope ?? "individual"}><option value="individual">One child redeems with their own stars</option><option value="family">All children contribute an equal share</option></select></label><p className="fieldHint">Family rewards split the total cost as evenly as possible across Charli, Andy, and Henry.</p>
+      <fieldset className="rewardEligibility"><legend>Who can redeem this reward?</legend>{state.members.map((member) => <label key={member.id}><input name={`reward-member-${member.id}`} type="checkbox" defaultChecked={!editingReward?.memberIds?.length || editingReward.memberIds.includes(member.id)} /><span style={{ background: member.color }}>{member.initial}</span>{member.name}</label>)}<p>Family-contribution rewards always include everyone.</p></fieldset>
       <div className="formRow"><label>Redemption limit<select name="limit" defaultValue={editingReward?.limit ?? "unlimited"}><option value="unlimited">Unlimited</option><option value="daily">Per day</option><option value="weekly">Per week</option><option value="monthly">Per month</option></select></label><label>Quantity allowed<input name="limitQuantity" type="number" min="1" max="100" defaultValue={editingReward?.limitQuantity ?? 1} /></label></div>
       <button className="saveButton" type="submit">{editingReward ? "Save reward changes" : "Add to the shop"}</button>
       {state.rewards.length > 0 && <div className="manageRewards"><strong>Current rewards</strong>{state.rewards.map((reward) => <div key={reward.id}><span>{reward.emoji} {reward.title} · ⭐ {reward.cost} · {reward.scope === "family" ? "family contribution" : "individual"} · {reward.limit === "unlimited" || !reward.limit ? "unlimited" : `${reward.limitQuantity ?? 1}/${reward.limit}`}</span><span><button type="button" onClick={() => setEditingReward(reward)}>Edit</button><button type="button" onClick={() => persist({ ...state, rewards: state.rewards.filter((item) => item.id !== reward.id) })}>Remove</button></span></div>)}</div>}
