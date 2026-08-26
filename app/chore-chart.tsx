@@ -291,6 +291,12 @@ export function ChoreChart() {
   const [showShare, setShowShare] = useState(false);
   const [qrCodeUrl, setQrCodeUrl] = useState("");
   const [shareStatus, setShareStatus] = useState("");
+  const [kidSession, setKidSession] = useState<string | null>(null);
+  const [kidLoginMember, setKidLoginMember] = useState<Member | null>(null);
+  const [kidLoginError, setKidLoginError] = useState("");
+  const [configuredKidIds, setConfiguredKidIds] = useState<string[]>([]);
+  const [showKidAccounts, setShowKidAccounts] = useState(false);
+  const [kidAccountStatus, setKidAccountStatus] = useState("");
 
   useEffect(() => {
     const load = async () => {
@@ -307,6 +313,7 @@ export function ChoreChart() {
       }
     };
     load();
+    fetch("/api/kid-auth", { cache: "no-store" }).then((response) => response.json()).then((data) => { setKidSession(data.memberId ?? null); setConfiguredKidIds(data.configuredMemberIds ?? []); if (data.memberId) { setChildHome(data.memberId); setActiveMember(data.memberId); setTab("kids"); setShowLaunch(false); } }).catch(() => undefined);
     platformAuthenticatorIsAvailable().then(setBiometricSupported).catch(() => setBiometricSupported(false));
     fetch("/api/passkey?mode=available").then((response) => response.json()).then((data) => setPasskeyAvailable(Boolean(data.available))).catch(() => undefined);
   }, []);
@@ -329,6 +336,41 @@ export function ChoreChart() {
       if (!response.ok) throw new Error();
       setSyncLabel("Synced");
     } catch { setSyncLabel("Saved on this device"); }
+  };
+  const persistCompletion = async (next: AppState) => {
+    if (!kidSession) return persist(next);
+    setState(next); setSyncLabel("Saving…");
+    const before = new Map(state.completions.map((item) => [item.id, item]));
+    const after = new Map(next.completions.map((item) => [item.id, item]));
+    const changed = next.completions.find((item) => JSON.stringify(before.get(item.id)) !== JSON.stringify(item));
+    const removed = state.completions.find((item) => item.id && !after.has(item.id));
+    try {
+      const response = await fetch("/api/kid-completions", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(changed ? { completion: changed } : { removeId: removed?.id }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Could not save");
+      setState(normalizeState(data)); setSyncLabel("Synced");
+    } catch { setState(state); setSyncLabel("Could not save — try again"); }
+  };
+  const openKid = (member: Member) => {
+    if (isParent || kidSession === member.id) { setChildHome(member.id); setActiveMember(member.id); setTab("kids"); setShowLaunch(false); return; }
+    setKidLoginError(""); setKidLoginMember(member);
+  };
+  const loginKid = async (form: FormData) => {
+    if (!kidLoginMember) return;
+    setKidLoginError("");
+    const response = await fetch("/api/kid-auth", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ memberId: kidLoginMember.id, pin: form.get("pin") }) });
+    const data = await response.json();
+    if (!response.ok) { setKidLoginError(data.error || "Could not sign in"); return; }
+    setKidSession(kidLoginMember.id); setChildHome(kidLoginMember.id); setActiveMember(kidLoginMember.id); setTab("kids"); setShowLaunch(false); setKidLoginMember(null);
+    const stateResponse = await fetch("/api/state", { cache: "no-store" }); if (stateResponse.ok) setState(normalizeState(await stateResponse.json()));
+  };
+  const logoutKid = async () => { await fetch("/api/kid-auth", { method: "DELETE" }); setKidSession(null); setShowLaunch(true); };
+  const saveKidPin = async (memberId: string, form: FormData) => {
+    setKidAccountStatus("");
+    const response = await fetch("/api/kid-auth", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ memberId, pin: form.get("pin") }) });
+    const data = await response.json();
+    if (!response.ok) { setKidAccountStatus(data.error || "Could not save the PIN"); return; }
+    setConfiguredKidIds((ids) => Array.from(new Set([...ids, memberId]))); setKidAccountStatus("PIN saved. Existing sessions for this child were signed out.");
   };
   const shareFamilyApp = async () => { setShareStatus(""); if (navigator.share) { try { await navigator.share({ title: `${state.household} · Tidy Team`, text: "Open our family chore chart", url: familyAppUrl }); setShareStatus("Shared!"); return; } catch { /* The share sheet may be dismissed. */ } } try { await navigator.clipboard.writeText(familyAppUrl); setShareStatus("Link copied!"); } catch { setShareStatus("Press and hold the link to copy it."); } };
 
@@ -371,7 +413,7 @@ export function ChoreChart() {
       mysteryMessage = prize.label;
       if (prize.amount) adjustments = [...adjustments, { id: `mystery-${Date.now()}`, memberId: winnerId, amount: prize.amount, note: prize.label, createdAt: new Date().toISOString() }];
     }
-    persist({ ...state, completions, adjustments });
+    persistCompletion({ ...state, completions, adjustments });
     if (!wasComplete && (!selectedChore?.verification || selectedChore.verification === "none")) {
       if (state.accessibilitySettings.sounds) try { const AudioCtx = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext; if (AudioCtx) { const audio = new AudioCtx(); const oscillator = audio.createOscillator(); const gain = audio.createGain(); oscillator.frequency.setValueAtTime(660, audio.currentTime); oscillator.frequency.exponentialRampToValueAtTime(990, audio.currentTime + .18); gain.gain.setValueAtTime(.08, audio.currentTime); gain.gain.exponentialRampToValueAtTime(.001, audio.currentTime + .25); oscillator.connect(gain).connect(audio.destination); oscillator.start(); oscillator.stop(audio.currentTime + .25); } } catch { /* Audio feedback is optional. */ }
       const chore = state.chores.find((item) => item.id === choreId);
@@ -396,7 +438,7 @@ export function ChoreChart() {
     const allJoined = (chore.memberIds ?? []).every((id) => participants.has(id));
     const nextCompletion: Completion = { ...(existing ?? { id: `${Date.now()}`, choreId: chore.id, date }), participantIds, status: allJoined ? "approved" : "pending" };
     const completions = participantIds.length === 0 ? state.completions.filter((item) => item !== existing) : existing ? state.completions.map((item) => item === existing ? nextCompletion : item) : [...state.completions, nextCompletion];
-    persist({ ...state, completions });
+    persistCompletion({ ...state, completions });
     if (allJoined) { setCelebration({ emoji: "🤝", color: "#6957d5", name: "Tidy Team", message: "Everyone joined in—bonus unlocked for" }); window.setTimeout(() => setCelebration(null), 1800); }
   };
   const toggleChecklistStep = (chore: Chore, stepIndex: number, date = selectedIso) => {
@@ -406,7 +448,7 @@ export function ChoreChart() {
     const finished = Boolean(chore.steps?.length && stepIds.size >= chore.steps.length);
     const next: Completion = { ...(existing ?? { id: `${Date.now()}`, choreId: chore.id, date }), stepIds: Array.from(stepIds), status: finished ? (chore.verification && chore.verification !== "none" ? "pending" : "approved") : "pending" };
     const completions = stepIds.size === 0 ? state.completions.filter((item) => item !== existing) : existing ? state.completions.map((item) => item === existing ? next : item) : [...state.completions, next];
-    persist({ ...state, completions });
+    persistCompletion({ ...state, completions });
     if (finished) { const member = state.members.find((item) => item.id === rotationMemberId(chore, date)); if (member) { setCelebration({ emoji: member.celebrationEmoji, color: member.color, name: member.name, message: "Routine complete—amazing work," }); window.setTimeout(() => setCelebration(null), 1700); } }
   };
 
@@ -420,7 +462,7 @@ export function ChoreChart() {
     const goal = chore.weeklyGoal ?? 1;
     if (flexibleCount(chore.id) >= goal) return;
     if (chore.verification === "photo") { setProofChore(chore); setProofDate(date); setProofError(""); return; }
-    persist({ ...state, completions: [...state.completions, { id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, choreId: chore.id, date, status: chore.verification && chore.verification !== "none" ? "pending" : "approved" }] });
+    persistCompletion({ ...state, completions: [...state.completions, { id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, choreId: chore.id, date, status: chore.verification && chore.verification !== "none" ? "pending" : "approved" }] });
     const member = state.members.find((item) => item.id === chore.memberId);
     setCelebration({ emoji: chore.memberIds?.length ? "🤝" : member?.celebrationEmoji || "⭐", color: chore.memberIds?.length ? "#6957d5" : member?.color || "#6957d5", name: chore.memberIds?.length ? "Tidy Team" : member?.name || "helper", message: "Weekly progress added for" });
     window.setTimeout(() => setCelebration(null), 1500);
@@ -429,7 +471,7 @@ export function ChoreChart() {
   const undoFlexible = (choreId: string) => {
     const dates = new Set(weekDates.map(iso));
     const latest = [...state.completions].reverse().find((item) => item.choreId === choreId && dates.has(item.date));
-    if (latest) persist({ ...state, completions: state.completions.filter((item) => item !== latest) });
+    if (latest) persistCompletion({ ...state, completions: state.completions.filter((item) => item !== latest) });
   };
 
   const submitPhotoProof = async (form: FormData) => {
@@ -652,10 +694,10 @@ export function ChoreChart() {
   const speakList = (memberId: string) => { const member = state.members.find((item) => item.id === memberId); const list = state.chores.filter((chore) => (chore.memberId === memberId || chore.memberIds?.includes(memberId)) && scheduledOn(chore, selectedDate) && !isComplete(chore.id)); if (typeof speechSynthesis === "undefined") return; speechSynthesis.cancel(); speechSynthesis.speak(new SpeechSynthesisUtterance(list.length ? `${member?.name}, your next jobs are: ${list.map((chore) => chore.title).join(", ")}.` : `${member?.name}, you are all done!`)); };
 
   return <main className={`shell ${state.accessibilitySettings.highContrast ? "highContrast" : ""} ${state.accessibilitySettings.largeText ? "largeText" : ""} ${state.accessibilitySettings.reducedMotion ? "reduceMotion" : ""}`}>
-    {showLaunch && <section className="familyLaunch" aria-labelledby="check-in-title"><button className="launchParent" onClick={() => { setShowLaunch(false); if (isParent) setShowParentDashboard(true); else setShowPin(true); }}>🔒 Parent</button><div><span className="launchMark">✓</span><p className="eyebrow">{state.household}</p><h1 id="check-in-title">Who&apos;s checking in?</h1><p>Tap your color to start today&apos;s adventure.</p></div><div className="launchKids">{state.members.map((member) => <button key={member.id} style={{ "--kid-color": member.color } as React.CSSProperties} onClick={() => { setChildHome(member.id); setTab("kids"); setShowLaunch(false); }}><span>{member.celebrationEmoji}</span><i style={{ background: member.color }}>{member.initial}</i><strong>{member.name}</strong><small>Let&apos;s go!</small></button>)}</div><button className="launchFamily" onClick={() => { setTab("family"); setShowLaunch(false); }}>👨‍👩‍👧 See everyone together</button></section>}
+    {showLaunch && <section className="familyLaunch" aria-labelledby="check-in-title"><button className="launchParent" onClick={() => { setShowLaunch(false); if (isParent) setShowParentDashboard(true); else setShowPin(true); }}>🔒 Parent</button><div><span className="launchMark">✓</span><p className="eyebrow">{state.household}</p><h1 id="check-in-title">Who&apos;s checking in?</h1><p>Tap your color, then enter your own secret PIN.</p></div><div className="launchKids">{state.members.map((member) => <button key={member.id} style={{ "--kid-color": member.color } as React.CSSProperties} onClick={() => openKid(member)}><span>{member.celebrationEmoji}</span><i style={{ background: member.color }}>{member.initial}</i><strong>{member.name}</strong><small>{kidSession === member.id ? "Signed in · let’s go!" : configuredKidIds.includes(member.id) ? "Tap to sign in" : "Parent setup needed"}</small></button>)}</div>{!kidSession && <button className="launchFamily" onClick={() => { setTab("family"); setShowLaunch(false); }}>👨‍👩‍👧 See everyone together</button>}</section>}
     <header className="topbar">
       <button className="brand" onClick={() => setShowLaunch(true)}><span className="brandMark">✓</span><span>Tidy Team</span></button>
-      <div className="headerActions"><button className="shareAppButton" onClick={() => { setShareStatus(""); setShowShare(true); }}>▦ Share app</button><button className={`parentButton ${isParent ? "unlocked" : ""}`} onClick={() => isParent ? setShowParentDashboard(true) : setShowPin(true)}>{isParent ? "⚙️ Parent dashboard" : "🔒 Parent"}</button><button className="household" onClick={() => isParent ? setShowPeople(true) : setShowPin(true)} aria-label="Edit household members"><span className="avatarStack">{state.members.map((m) => <i key={m.id} style={{ background: m.color }}>{m.initial}</i>)}</span><span><strong>{state.household}</strong><small>{syncLabel} · {isParent ? "Edit" : "Locked"}</small></span></button></div>
+      <div className="headerActions"><button className="shareAppButton" onClick={() => { setShareStatus(""); setShowShare(true); }}>▦ Share app</button>{kidSession && !isParent && <button className="kidSignOut" onClick={logoutKid}>↪ Sign out</button>}<button className={`parentButton ${isParent ? "unlocked" : ""}`} onClick={() => isParent ? setShowParentDashboard(true) : setShowPin(true)}>{isParent ? "⚙️ Parent dashboard" : "🔒 Parent"}</button><button className="household" onClick={() => isParent ? setShowPeople(true) : setShowPin(true)} aria-label="Edit household members"><span className="avatarStack">{state.members.map((m) => <i key={m.id} style={{ background: m.color }}>{m.initial}</i>)}</span><span><strong>{state.household}</strong><small>{syncLabel} · {kidSession ? `${state.members.find((m) => m.id === kidSession)?.name} signed in` : isParent ? "Edit" : "Locked"}</small></span></button></div>
     </header>
 
     <section className="hero" id="top">
@@ -692,8 +734,8 @@ export function ChoreChart() {
 
     <section className="dashboard" aria-label="Chore chart">
       <div className="controls">
-        <div className="tabs"><button className={tab === "today" ? "active" : ""} onClick={() => setTab("today")}>My day</button><button className={tab === "kids" ? "active" : ""} onClick={() => setTab("kids")}>Kid home</button><button className={tab === "week" ? "active" : ""} onClick={() => setTab("week")}>Our week</button><button className={tab === "family" ? "active" : ""} onClick={() => setTab("family")}>Kids side by side</button></div>
-        {tab === "family" ? <div className="familyRange" aria-label="Family board range"><button className={familyRange === "day" ? "active" : ""} onClick={() => setFamilyRange("day")}>Day</button><button className={familyRange === "week" ? "active" : ""} onClick={() => setFamilyRange("week")}>Week</button></div> : tab === "kids" ? <div className="memberFilters childChooser">{state.members.map((m) => <button key={m.id} className={childHome === m.id ? "active" : ""} onClick={() => setChildHome(m.id)}><span style={{ background: m.color }}>{m.initial}</span>{m.name}</button>)}</div> : <div className="memberFilters"><button className={activeMember === "all" ? "active" : ""} onClick={() => setActiveMember("all")}>Everyone</button>{state.members.map((m) => <button key={m.id} className={activeMember === m.id ? "active" : ""} onClick={() => setActiveMember(m.id)}><span style={{ background: m.color }}>{m.initial}</span>{m.name}</button>)}</div>}
+        <div className="tabs"><button className={tab === "today" ? "active" : ""} onClick={() => setTab("today")}>My day</button><button className={tab === "kids" ? "active" : ""} onClick={() => setTab("kids")}>Kid home</button>{!kidSession && <><button className={tab === "week" ? "active" : ""} onClick={() => setTab("week")}>Our week</button><button className={tab === "family" ? "active" : ""} onClick={() => setTab("family")}>Kids side by side</button></>}</div>
+        {tab === "family" ? <div className="familyRange" aria-label="Family board range"><button className={familyRange === "day" ? "active" : ""} onClick={() => setFamilyRange("day")}>Day</button><button className={familyRange === "week" ? "active" : ""} onClick={() => setFamilyRange("week")}>Week</button></div> : tab === "kids" ? <div className="memberFilters childChooser">{state.members.filter((m) => !kidSession || m.id === kidSession).map((m) => <button key={m.id} className={childHome === m.id ? "active" : ""} onClick={() => setChildHome(m.id)}><span style={{ background: m.color }}>{m.initial}</span>{m.name}</button>)}</div> : <div className="memberFilters">{!kidSession && <button className={activeMember === "all" ? "active" : ""} onClick={() => setActiveMember("all")}>Everyone</button>}{state.members.filter((m) => !kidSession || m.id === kidSession).map((m) => <button key={m.id} className={activeMember === m.id ? "active" : ""} onClick={() => setActiveMember(m.id)}><span style={{ background: m.color }}>{m.initial}</span>{m.name}</button>)}</div>}
         {isParent && <><button className="ideaButton" onClick={() => setShowSuggestions(true)}>💡 Chore ideas</button><button className="addButton" onClick={() => setShowAdd(true)}>＋ Add a job</button></>}
       </div>
       {tab === "today" && <div className="routineFocus" aria-label="Routine"><button className={routineFocus === "now" ? "active now" : ""} onClick={() => setRoutineFocus("now")}>⏰ Due now</button><button className={routineFocus === "all" ? "active" : ""} onClick={() => setRoutineFocus("all")}>All day</button><button className={routineFocus === "morning" ? "active" : ""} onClick={() => setRoutineFocus("morning")}>☀️ Morning</button><button className={routineFocus === "afternoon" ? "active" : ""} onClick={() => setRoutineFocus("afternoon")}>🎒 After school</button><button className={routineFocus === "evening" ? "active" : ""} onClick={() => setRoutineFocus("evening")}>🌙 Bedtime</button></div>}
@@ -796,7 +838,7 @@ export function ChoreChart() {
       <section className="activityLedger"><div><strong>Family activity</strong><input aria-label="Search activity" placeholder="Search chores, rewards, or names" value={activitySearch} onChange={(event) => setActivitySearch(event.target.value)} /></div>{activityLedger.filter((item) => item.text.toLowerCase().includes(activitySearch.toLowerCase())).slice(0, 30).map((item) => <p key={item.id}><span>{item.kind}</span><span>{item.text}</span><time>{item.date}</time></p>)}</section>
       <section className="familyJournal"><div><strong>Private family journal</strong><small>Notes and media require Parent Mode to view or remove.</small><button className="cleanupMedia" onClick={deleteExpiredMedia}>Delete media older than {state.engagementSettings.photoRetentionDays} days</button></div>{state.journalEntries.length === 0 ? <p className="journalEmpty">No journal moments yet.</p> : state.journalEntries.slice().reverse().map((entry) => { const member = state.members.find((item) => item.id === entry.memberId); const chore = state.chores.find((item) => item.id === entry.choreId); return <article key={entry.id}><span style={{ background: member?.color }}>{member?.initial}</span><div><strong>{member?.name} {chore ? `· ${chore.title}` : ""}</strong><p>{entry.note || (entry.mediaType === "audio" ? "Voice memo" : "Progress photo")}</p><small>{new Date(entry.createdAt).toLocaleString()} · {entry.status}</small></div><div className="journalActions">{entry.mediaPath && <a href={`/api/media?pathname=${encodeURIComponent(entry.mediaPath)}`} target="_blank" rel="noreferrer">{entry.mediaType === "audio" ? "▶ Listen" : "🖼 View / download"}</a>}{entry.status === "pending" && <button onClick={() => persist({ ...state, journalEntries: state.journalEntries.map((item) => item.id === entry.id ? { ...item, status: "approved" } : item) })}>Approve</button>}<button onClick={() => deleteJournalEntry(entry)}>Delete</button></div></article>; })}</section>
       <div className="dashboardRules"><strong>Point rules</strong><span>{state.pointPolicy.reset === "never" ? "No automatic reset" : `Reset ${state.pointPolicy.reset}`}</span><span>{state.pointPolicy.dailyEarnLimit > 0 ? `${state.pointPolicy.dailyEarnLimit} points/day maximum` : "No daily limit"}</span><span>{state.pointPolicy.maxBalance > 0 ? `${state.pointPolicy.maxBalance} maximum balance` : "No balance limit"}</span></div>
-      <div className="parentActions"><button onClick={() => { setShowParentDashboard(false); setShowPeople(true); }}>👨‍👩‍👧 Edit family, reactions & points</button><button onClick={() => { setShowParentDashboard(false); setShowAdd(true); }}>＋ Add a chore</button><button onClick={() => { setShowParentDashboard(false); setShowTemplates(true); }}>🧩 Activate a routine template</button><button onClick={() => { setShowParentDashboard(false); setShowSuggestions(true); }}>💡 Browse chore ideas</button><button onClick={() => { setShowParentDashboard(false); setShowRewardEditor(true); }}>🎁 Manage rewards</button><button onClick={() => { setShowParentDashboard(false); setShowFunSettings(true); }}>🎉 Fun, quests & family modes</button></div>
+      <div className="parentActions"><button onClick={() => { setShowParentDashboard(false); setShowKidAccounts(true); }}>🔑 Manage child device logins</button><button onClick={() => { setShowParentDashboard(false); setShowPeople(true); }}>👨‍👩‍👧 Edit family, reactions & points</button><button onClick={() => { setShowParentDashboard(false); setShowAdd(true); }}>＋ Add a chore</button><button onClick={() => { setShowParentDashboard(false); setShowTemplates(true); }}>🧩 Activate a routine template</button><button onClick={() => { setShowParentDashboard(false); setShowSuggestions(true); }}>💡 Browse chore ideas</button><button onClick={() => { setShowParentDashboard(false); setShowRewardEditor(true); }}>🎁 Manage rewards</button><button onClick={() => { setShowParentDashboard(false); setShowFunSettings(true); }}>🎉 Fun, quests & family modes</button></div>
       <p className="calendarAdminStatus"><strong>Calendar:</strong> {calendarConfigured ? `${calendarEvents.length} events loaded for this week.` : "Ready for private Google, iCloud, or Outlook feed links."}</p><button className="passkeySetup" onClick={openCalendarSettings}>🗓️ Connect & manage calendars</button>
       {biometricSupported && <button className="passkeySetup" onClick={enrollPasskey}>👆 {passkeyAvailable ? "Add another trusted thumbprint" : "Set up thumbprint / Face ID"}</button>}{pinError && <p className="pinError" role="alert">{pinError}</p>}<button className="lockParent" onClick={lockParent}>🔒 Lock Parent Mode</button>
     </section></div>}
@@ -843,6 +885,10 @@ export function ChoreChart() {
     </form></div>}
 
     {journalChore && <div className="modalBackdrop" onMouseDown={(event) => event.target === event.currentTarget && setJournalChore(null)}><form className="modal journalModal" action={submitJournal}><button type="button" className="close" onClick={() => setJournalChore(null)} aria-label="Close">×</button><p className="eyebrow">My proud moment</p><h2>{journalChore.icon} {journalChore.title}</h2><p className="modalIntro">Tell your family what you did. A note is enough—photos and voice memos are always optional.</p><label>My note<input id="journal-note" name="note" placeholder="I was proud because…" maxLength={500} /></label><button className="dictateButton" type="button" onClick={dictateNote}>🎙️ Say my note</button><div className="journalMediaChoices"><label>📷 Optional progress photo<input name="photo" type="file" accept="image/*" capture="environment" /></label><label>🎙️ Optional voice memo<input name="audio" type="file" accept="audio/*" capture="user" /></label></div><p className="fieldHint">Choose either a photo or voice memo. Private media is stored only from a trusted family device and appears in the Parent Dashboard.</p>{journalError && <p className="pinError" role="alert">{journalError}</p>}<button className="saveButton" type="submit">Save my proud moment</button></form></div>}
+
+    {kidLoginMember && <div className="modalBackdrop" onMouseDown={(event) => event.target === event.currentTarget && setKidLoginMember(null)}><form className="modal pinModal kidLoginModal" action={loginKid} style={{ "--kid-color": kidLoginMember.color } as React.CSSProperties}><button type="button" className="close" onClick={() => setKidLoginMember(null)} aria-label="Close">×</button><span className="kidLoginAvatar" style={{ background: kidLoginMember.color }}>{kidLoginMember.initial}</span><p className="eyebrow">{kidLoginMember.celebrationEmoji} My Tidy Team</p><h2>Hi, {kidLoginMember.name}!</h2><p className="modalIntro">Enter your four-number secret code. This device will remember you until you sign out.</p><label>My PIN<input name="pin" type="password" inputMode="numeric" pattern="[0-9]{4}" maxLength={4} autoComplete="off" autoFocus required /></label>{kidLoginError && <p className="pinError" role="alert">{kidLoginError}</p>}<button className="saveButton" type="submit" style={{ background: kidLoginMember.color }}>Open my chores</button></form></div>}
+
+    {showKidAccounts && isParent && <div className="modalBackdrop" onMouseDown={(event) => event.target === event.currentTarget && setShowKidAccounts(false)}><section className="modal kidAccountsModal"><button type="button" className="close" onClick={() => setShowKidAccounts(false)} aria-label="Close">×</button><p className="eyebrow">Child device access</p><h2>Kid logins</h2><p className="modalIntro">Create a different four-number PIN for each child. PINs are securely scrambled before storage and never shown again.</p><div className="kidAccountList">{state.members.map((member) => <form key={member.id} action={(form) => saveKidPin(member.id, form)}><span style={{ background: member.color }}>{member.initial}</span><div><strong>{member.name}</strong><small>{configuredKidIds.includes(member.id) ? "Login ready · entering a new PIN resets it" : "Needs a PIN before first sign-in"}</small></div><input name="pin" aria-label={`${member.name}'s new PIN`} type="password" inputMode="numeric" pattern="[0-9]{4}" maxLength={4} placeholder="4 digits" required /><button type="submit">{configuredKidIds.includes(member.id) ? "Reset" : "Create"}</button></form>)}</div>{kidAccountStatus && <p className={kidAccountStatus.startsWith("PIN saved") ? "kidAccountSuccess" : "pinError"} role="status">{kidAccountStatus}</p>}<p className="fieldHint">After setup, use the Share app QR code on each child’s device. They choose their name and enter their PIN once.</p></section></div>}
 
     {showPin && <div className="modalBackdrop" onMouseDown={(event) => event.target === event.currentTarget && setShowPin(false)}><form className="modal pinModal" action={unlockParent}>
       <button type="button" className="close" onClick={() => setShowPin(false)} aria-label="Close">×</button><p className="eyebrow">Grown-ups only</p><h2>Unlock Parent Mode</h2><p className="modalIntro">Enter the four-digit family PIN to edit chores, manage rewards, or approve redemptions.</p>
