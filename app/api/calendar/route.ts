@@ -4,8 +4,7 @@ import { ensureCalendarTable } from "../../../lib/db";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type FeedConfig = { name: string; url: string; type?: "kids" | "work" | "family"; color?: string };
-const colors = { kids: "#b85dc7", work: "#3186c7", family: "#e76f35" };
+type FeedConfig = { name: string; url: string; type?: string; color?: string; emoji?: string; visible?: boolean };
 
 function getEnvironmentFeeds(): FeedConfig[] {
   try {
@@ -16,8 +15,8 @@ function getEnvironmentFeeds(): FeedConfig[] {
 
 export async function GET(request: Request) {
   const sql = await ensureCalendarTable();
-  const databaseFeeds = sql ? await sql`SELECT name, url, type, color FROM calendar_feeds ORDER BY created_at` as unknown as FeedConfig[] : [];
-  const feeds = [...getEnvironmentFeeds(), ...databaseFeeds];
+  const databaseFeeds = sql ? await sql`SELECT name, url, type, color, emoji, visible FROM calendar_feeds ORDER BY created_at` as unknown as FeedConfig[] : [];
+  const feeds = [...getEnvironmentFeeds(), ...databaseFeeds].filter((feed) => feed.visible !== false);
   if (!feeds.length) return Response.json({ configured: false, events: [] });
   const requestUrl = new URL(request.url);
   const from = new Date(requestUrl.searchParams.get("from") || Date.now());
@@ -26,7 +25,7 @@ export async function GET(request: Request) {
     const response = await fetch(feed.url, { signal: AbortSignal.timeout(8000), next: { revalidate: 300 } });
     if (!response.ok) throw new Error(`Calendar feed unavailable: ${feed.name}`);
     const parsed = await ical.async.parseICS(await response.text());
-    const type = feed.type || "family";
+    const type = feed.type || "Family";
     return Object.values(parsed).flatMap((item) => {
       if (!item || item.type !== "VEVENT") return [];
       const event = item as VEvent;
@@ -35,7 +34,7 @@ export async function GET(request: Request) {
         id: `${event.uid || feed.name}-${instance.start.toISOString()}`,
         title: String(event.summary || "Calendar event"),
         start: instance.start.toISOString(), end: instance.end.toISOString(), allDay: instance.isFullDay,
-        location: event.location ? String(event.location) : "", calendar: feed.name, type, color: feed.color || colors[type],
+        location: event.location ? String(event.location) : "", calendar: feed.name, type, color: feed.color || "#e76f35", emoji: feed.emoji || "🗓️",
       }));
     });
   }));
