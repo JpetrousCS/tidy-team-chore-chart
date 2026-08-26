@@ -21,7 +21,7 @@ type RewardSuggestion = { id: string; memberId: string; title: string; emoji: st
 type JournalEntry = { id: string; memberId: string; choreId?: string; note: string; createdAt: string; mediaPath?: string; mediaType?: "photo" | "audio"; status: "pending" | "approved" };
 type SuggestedChore = { title: string; detail: string; icon: string; points: number; cadence: Cadence; routine: Routine; area: Room; team?: boolean };
 type EngagementSettings = { mysteryEnabled: boolean; mysteryChance: number; questEnabled: boolean; questTarget: number; questReward: string; mode: "normal" | "vacation" | "visit"; shields: Record<string, number>; photoRetentionDays: number; weatherZip: string };
-type AppState = { household: string; members: Member[]; chores: Chore[]; completions: Completion[]; rewards: Reward[]; redemptions: Redemption[]; adjustments: PointAdjustment[]; rewardSuggestions: RewardSuggestion[]; journalEntries: JournalEntry[]; removedDefaultChoreIds: string[]; pointPolicy: PointPolicy; notificationSettings: NotificationSettings; accessibilitySettings: AccessibilitySettings; engagementSettings: EngagementSettings };
+type AppState = { household: string; members: Member[]; chores: Chore[]; completions: Completion[]; rewards: Reward[]; redemptions: Redemption[]; adjustments: PointAdjustment[]; rewardSuggestions: RewardSuggestion[]; journalEntries: JournalEntry[]; removedDefaultChoreIds: string[]; examplesSeeded?: boolean; pointPolicy: PointPolicy; notificationSettings: NotificationSettings; accessibilitySettings: AccessibilitySettings; engagementSettings: EngagementSettings };
 type CalendarEvent = { id: string; title: string; start: string; end: string; allDay: boolean; location: string; calendar: string; type: "kids" | "work" | "family"; color: string };
 type CalendarFeedSummary = { id: string; name: string; type: "kids" | "work" | "family"; color: string };
 type WeatherReport = { zip: string; place: string; updatedAt: string; temperature: number; feelsLike: number; wind: number; precipitation: number; label: string; emoji: string; forecast: { date: string; high: number; low: number; label: string; emoji: string }[] };
@@ -157,6 +157,7 @@ const starterState: AppState = {
   rewardSuggestions: [],
   journalEntries: [],
   removedDefaultChoreIds: [],
+  examplesSeeded: true,
   pointPolicy: { reset: "never", dailyEarnLimit: 0, maxBalance: 0 },
   notificationSettings: { enabled: false, evening: true, rewards: true, calendar: true, quietStart: "20:00", quietEnd: "07:00", memberIds: ["charli", "andy", "henry"] },
   accessibilitySettings: { highContrast: false, largeText: false, reducedMotion: false, sounds: false, spokenChores: false },
@@ -197,8 +198,8 @@ function normalizeState(saved: AppState): AppState {
   const notificationSettings = Object.assign({ enabled: false, evening: true, rewards: true, calendar: true, quietStart: "20:00", quietEnd: "07:00", memberIds: members.map((member) => member.id) }, saved.notificationSettings ?? {}) as NotificationSettings;
   const accessibilitySettings = Object.assign({ highContrast: false, largeText: false, reducedMotion: false, sounds: false, spokenChores: false }, saved.accessibilitySettings ?? {}) as AccessibilitySettings;
   const engagementSettings = Object.assign({ mysteryEnabled: true, mysteryChance: 12, questEnabled: true, questTarget: 500, questReward: "Family pizza night", mode: "normal", shields: Object.fromEntries(members.map((member) => [member.id, 2])), photoRetentionDays: 30, weatherZip: "48064" }, saved.engagementSettings ?? {}) as EngagementSettings;
-  const rewards = [...(saved.rewards ?? [])]; for (const example of starterRewards) if (!rewards.some((reward) => reward.id === example.id)) rewards.push(example);
-  return { ...saved, members, chores: chores.map((chore) => chore.memberIds?.length ? { ...chore, teamBonus: chore.teamBonus ?? 5, teamMode: chore.teamMode ?? "one" } : chore), completions, rewards: rewards.map((reward) => ({ ...reward, scope: reward.scope ?? "individual", memberIds: reward.memberIds ?? members.map((member) => member.id), limit: reward.limit ?? "unlimited", limitQuantity: reward.limitQuantity ?? 1 })), redemptions: saved.redemptions ?? [], adjustments: saved.adjustments ?? [], rewardSuggestions: saved.rewardSuggestions ?? [], journalEntries: saved.journalEntries ?? [], removedDefaultChoreIds, pointPolicy: saved.pointPolicy ?? { reset: "never", dailyEarnLimit: 0, maxBalance: 0 }, notificationSettings, accessibilitySettings, engagementSettings };
+  const rewards = [...(saved.rewards ?? [])]; if (!saved.examplesSeeded) for (const example of starterRewards) if (!rewards.some((reward) => reward.id === example.id)) rewards.push(example);
+  return { ...saved, members, chores: chores.map((chore) => chore.memberIds?.length ? { ...chore, teamBonus: chore.teamBonus ?? 5, teamMode: chore.teamMode ?? "one" } : chore), completions, rewards: rewards.map((reward) => ({ ...reward, scope: reward.scope ?? "individual", memberIds: reward.memberIds ?? members.map((member) => member.id), limit: reward.limit ?? "unlimited", limitQuantity: reward.limitQuantity ?? 1 })), redemptions: saved.redemptions ?? [], adjustments: saved.adjustments ?? [], rewardSuggestions: saved.rewardSuggestions ?? [], journalEntries: saved.journalEntries ?? [], removedDefaultChoreIds, examplesSeeded: true, pointPolicy: saved.pointPolicy ?? { reset: "never", dailyEarnLimit: 0, maxBalance: 0 }, notificationSettings, accessibilitySettings, engagementSettings };
 }
 
 const iso = (date = new Date()) => date.toISOString().slice(0, 10);
