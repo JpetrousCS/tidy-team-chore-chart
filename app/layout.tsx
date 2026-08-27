@@ -3,6 +3,7 @@ import "./globals.css";
 import "./kid-logins.css";
 import "./reward-math.css";
 import "./access-control.css";
+import "./redemption-receipt.css";
 import { PwaRegister } from "./pwa-register";
 
 export const metadata: Metadata = {
