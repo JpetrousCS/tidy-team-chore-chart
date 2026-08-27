@@ -222,9 +222,9 @@ function normalizeState(saved: AppState): AppState {
   const completions = Array.from(new Map(saved.completions.map((item) => { const mapped = { ...item, choreId: replacedIds.get(item.choreId) || item.choreId }; return [mapped.id || `${mapped.choreId}-${mapped.date}`, mapped]; })).values());
   const notificationSettings = Object.assign({ enabled: false, evening: true, rewards: true, calendar: true, quietStart: "20:00", quietEnd: "07:00", memberIds: members.map((member) => member.id) }, saved.notificationSettings ?? {}) as NotificationSettings;
   const accessibilitySettings = Object.assign({ highContrast: false, largeText: false, reducedMotion: false, sounds: false, spokenChores: false }, saved.accessibilitySettings ?? {}) as AccessibilitySettings;
-  const engagementSettings = Object.assign({ mysteryEnabled: true, mysteryChance: 12, questEnabled: true, questTarget: 500, questReward: "Family pizza night", mode: "normal", shields: Object.fromEntries(members.map((member) => [member.id, 2])), photoRetentionDays: 30, weatherZip: "48064" }, saved.engagementSettings ?? {}) as EngagementSettings;
+  const engagementSettings = Object.assign({ mysteryEnabled: false, mysteryChance: 0, questEnabled: true, questTarget: 500, questReward: "Family pizza night", mode: "normal", shields: Object.fromEntries(members.map((member) => [member.id, 2])), photoRetentionDays: 30, weatherZip: "48064" }, saved.engagementSettings ?? {}) as EngagementSettings;
   const rewards = [...(saved.rewards ?? [])]; if (!saved.examplesSeeded) for (const example of starterRewards) if (!rewards.some((reward) => reward.id === example.id)) rewards.push(example);
-  return { ...saved, members, chores: chores.map((chore) => chore.memberIds?.length ? { ...chore, teamBonus: chore.teamBonus ?? 5, teamMode: chore.teamMode ?? "one" } : chore), completions, rewards: rewards.map((reward) => ({ ...reward, scope: reward.scope ?? "individual", memberIds: reward.memberIds ?? members.map((member) => member.id), limit: reward.limit ?? "unlimited", limitQuantity: reward.limitQuantity ?? 1 })), redemptions: saved.redemptions ?? [], adjustments: saved.adjustments ?? [], rewardSuggestions: saved.rewardSuggestions ?? [], journalEntries: saved.journalEntries ?? [], removedDefaultChoreIds, examplesSeeded: true, pointPolicy: saved.pointPolicy ?? { reset: "never", dailyEarnLimit: 0, maxBalance: 0 }, notificationSettings, accessibilitySettings, engagementSettings };
+  return { ...saved, members, chores: chores.map((chore) => chore.memberIds?.length ? { ...chore, teamBonus: chore.teamBonus ?? 5, teamMode: chore.teamMode ?? "one" } : chore), completions, rewards: rewards.map((reward) => ({ ...reward, scope: reward.scope ?? "individual", memberIds: reward.memberIds ?? members.map((member) => member.id), limit: reward.limit ?? "unlimited", limitQuantity: reward.limitQuantity ?? 1 })), redemptions: saved.redemptions ?? [], adjustments: saved.adjustments ?? [], rewardSuggestions: saved.rewardSuggestions ?? [], journalEntries: saved.journalEntries ?? [], removedDefaultChoreIds, examplesSeeded: true, pointPolicy: saved.pointPolicy ?? { reset: "never", dailyEarnLimit: 0, maxBalance: 0 }, notificationSettings, accessibilitySettings, engagementSettings: { ...engagementSettings, mysteryEnabled: false, mysteryChance: 0 } };
 }
 
 const iso = (date = new Date()) => date.toISOString().slice(0, 10);
@@ -300,6 +300,7 @@ export function ChoreChart() {
   const [rewardMath, setRewardMath] = useState<{ reward: Reward; quantity: number } | null>(null);
   const [showChangeKidPin, setShowChangeKidPin] = useState(false);
   const [changeKidPinStatus, setChangeKidPinStatus] = useState("");
+  const [redemptionReceipt, setRedemptionReceipt] = useState<{ title: string; rows: { member: Member; before: number; spent: number; after: number }[] } | null>(null);
 
   useEffect(() => {
     const load = async () => {
@@ -318,6 +319,11 @@ export function ChoreChart() {
   }, []);
 
   useEffect(() => { setWeatherError(false); fetch(`/api/weather?zip=${encodeURIComponent(state.engagementSettings.weatherZip)}`, { cache: "no-store" }).then((response) => response.ok ? response.json() : Promise.reject()).then(setWeather).catch(() => setWeatherError(true)); }, [state.engagementSettings.weatherZip]);
+  useEffect(() => {
+    if (!isParent && !kidSession) return;
+    const refresh = async () => { if (document.visibilityState !== "visible") return; const response = await fetch("/api/state", { cache: "no-store" }); if (response.ok) { const saved = await response.json(); if (saved) { setState(normalizeState(saved)); setSyncLabel("Synced"); } } };
+    const timer = window.setInterval(refresh, 15_000); return () => window.clearInterval(timer);
+  }, [isParent, kidSession]);
   useEffect(() => { if (!showShare || qrCodeUrl) return; QRCode.toDataURL(familyAppUrl, { width: 720, margin: 2, errorCorrectionLevel: "H", color: { dark: "#272820", light: "#fffdf8" } }).then(setQrCodeUrl).catch(() => setShareStatus("The QR code could not be generated.")); }, [showShare, qrCodeUrl]);
 
   useEffect(() => {
@@ -619,6 +625,8 @@ export function ChoreChart() {
     const member = pointsByMember.find((item) => item.id === redemption.memberId);
     const affordable = redemption.contributions ? state.members.every((item) => (pointsByMember.find((member) => member.id === item.id)?.points ?? 0) >= (redemption.contributions?.[item.id] ?? 0)) : Boolean(member && member.points >= redemption.cost);
     if (!affordable) return;
+    const affected = redemption.contributions ? state.members.filter((item) => (redemption.contributions?.[item.id] ?? 0) > 0) : state.members.filter((item) => item.id === redemption.memberId);
+    setRedemptionReceipt({ title: redemption.rewardTitle, rows: affected.map((item) => { const before = pointsByMember.find((entry) => entry.id === item.id)?.points ?? 0; const spent = redemption.contributions?.[item.id] ?? redemption.cost; return { member: item, before, spent, after: Math.max(0, before - spent) }; }) });
     persist({ ...state, redemptions: state.redemptions.map((item) => item.id === redemption.id ? { ...item, status: "approved" } : item) });
   };
 
@@ -912,6 +920,8 @@ export function ChoreChart() {
     </form></div>}
 
     {showChangeKidPin && kidSession && <div className="modalBackdrop" onMouseDown={(event) => event.target === event.currentTarget && setShowChangeKidPin(false)}><form className="modal pinModal" action={changeOwnKidPin}><button type="button" className="close" onClick={() => setShowChangeKidPin(false)} aria-label="Close">×</button><p className="eyebrow">My private code</p><h2>Choose a new PIN</h2><p className="modalIntro">Pick four numbers you can remember. You’ll sign in again with the new PIN.</p><label>New PIN<input name="pin" type="password" inputMode="numeric" pattern="[0-9]{4}" maxLength={4} autoComplete="new-password" required /></label><label>Enter it again<input name="confirm" type="password" inputMode="numeric" pattern="[0-9]{4}" maxLength={4} autoComplete="new-password" required /></label>{changeKidPinStatus && <p className="pinError" role="alert">{changeKidPinStatus}</p>}<button className="saveButton" type="submit">Save my new PIN</button></form></div>}
+
+    {redemptionReceipt && <div className="modalBackdrop" onMouseDown={(event) => event.target === event.currentTarget && setRedemptionReceipt(null)}><section className="modal redemptionReceipt"><button type="button" className="close" onClick={() => setRedemptionReceipt(null)} aria-label="Close">×</button><p className="eyebrow">Reward approved</p><h2>🎉 Stars updated!</h2><p className="modalIntro">{redemptionReceipt.title} is ready. Here are the new balances:</p><div>{redemptionReceipt.rows.map((row) => <article key={row.member.id} style={{ "--receipt-color": row.member.color } as React.CSSProperties}><span style={{ background: row.member.color }}>{row.member.initial}</span><strong>{row.member.name}</strong><div><b>⭐ {row.before}</b><i>− ⭐ {row.spent}</i><em>= ⭐ {row.after}</em></div><small>Previous balance − redeemed stars = new balance</small></article>)}</div><button className="saveButton" onClick={() => setRedemptionReceipt(null)}>Awesome!</button></section></div>}
 
     {celebration && <div className="celebration" aria-live="polite" style={{ "--celebrate": celebration.color } as React.CSSProperties}><div className="burst"><i>✦</i><i>★</i><span>{celebration.emoji}</span><i>✦</i><i>★</i></div><strong>{celebration.message} {celebration.name}!</strong></div>}
   </main>;
